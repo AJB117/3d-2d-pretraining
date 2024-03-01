@@ -88,13 +88,6 @@ parser.add_argument(
 )
 parser.add_argument("--SchNet_gamma", type=float, default=None)
 
-# for PaiNN
-parser.add_argument("--PaiNN_radius_cutoff", type=float, default=5.0)
-parser.add_argument("--PaiNN_n_interactions", type=int, default=3)
-parser.add_argument("--PaiNN_n_rbf", type=int, default=20)
-parser.add_argument("--PaiNN_readout", type=str, default="add", choices=["mean", "add"])
-parser.add_argument("--PaiNN_gamma", type=float, default=None)
-
 ######################### for GraphMVP SSL #########################
 ### for 2D GNN
 parser.add_argument("--gnn_type", type=str, default="GIN")
@@ -119,38 +112,16 @@ parser.add_argument("--gmvp_gnn_lr_scale", type=float, default=1)
 parser.add_argument("--gmvp_schnet_lr_scale", type=float, default=0.1)
 
 
-######################### for GraphMVP SSL #########################
 ### for 3D GNN
 parser.add_argument("--gnn_3d_lr_scale", type=float, default=1)
 
 ### for masking
 parser.add_argument("--SSL_masking_ratio", type=float, default=0.15)
 
-### for 2D-3D Contrastive SSL
-parser.add_argument("--CL_neg_samples", type=int, default=1)
-parser.add_argument(
-    "--CL_similarity_metric",
-    type=str,
-    default="InfoNCE_dot_prod",
-    choices=["InfoNCE_dot_prod", "EBM_dot_prod", "EBM_node_dot_prod"],
-)  #! GraphMVP uses EBM_dot_prod
-
 parser.add_argument("--T", type=float, default=0.1)
 parser.add_argument("--normalize", dest="normalize", action="store_true")
 parser.add_argument("--no_normalize", dest="normalize", action="store_false")
-# parser.add_argument("--alpha_1", type=float, default=1)
 
-### for MoleculeSDE
-parser.add_argument("--SDE_type_2Dto3D", type=str, default="VE")
-parser.add_argument("--SDE_type_3Dto2D", type=str, default="VE")
-parser.add_argument("--SDE_2Dto3D_model", type=str, default="SDEModel2Dto3D_01")
-parser.add_argument(
-    "--SDE_3Dto2D_model", type=str, default="SDEModel3Dto2D_node_adj_dense"
-)
-parser.add_argument("--SDE_coeff_contrastive", type=float, default=1)
-parser.add_argument("--SDE_coeff_contrastive_skip_epochs", type=int, default=0)
-parser.add_argument("--SDE_coeff_generative_2Dto3D", type=float, default=1)
-parser.add_argument("--SDE_coeff_generative_3Dto2D", type=float, default=1)
 
 # This is only for 3D to 2D
 parser.add_argument("--use_extend_graph", dest="use_extend_graph", action="store_true")
@@ -165,36 +136,6 @@ parser.set_defaults(noise_on_one_hot=True)
 parser.add_argument("--SDE_anneal_power", type=float, default=0)
 # This is only for 2D to 3D to MoleculeNet property
 parser.add_argument("--molecule_property_SDE_2D", type=float, default=1)
-
-### for MoleculeSDE inference
-parser.add_argument(
-    "--generator",
-    type=str,
-    help="type of generator [MultiScaleLD, PC]",
-    default="MultiScaleLD",
-)
-parser.add_argument("--eval_epoch", type=int, default=None, help="evaluation epoch")
-parser.add_argument("--start", type=int, default=0, help="start idx of test generation")
-parser.add_argument("--end", type=int, default=100, help="end idx of test generation")
-parser.add_argument(
-    "--num_repeat_SDE_inference", type=int, default=10, help="number of conformers"
-)
-parser.add_argument(
-    "--num_repeat_SDE_predict",
-    type=int,
-    default=1,
-    help="number of conformers for prediction",
-)
-parser.add_argument("--min_sigma", type=float, default=0.0)
-parser.add_argument("--steps_pos", type=int, default=100, help="MCMC")
-parser.add_argument("--step_lr_pos", type=float, default=0.0000015)
-parser.add_argument("--clip", type=float, default=1000)
-parser.add_argument("--num_diffusion_timesteps_2Dto3D_inference", type=int, default=20)
-parser.add_argument("--num_diffusion_timesteps_3Dto2D_inference", type=int, default=20)
-parser.add_argument("--visualization_timesteps_interval", type=int, default=20)
-parser.add_argument("--data_path_2D_SDE", type=str, default="")
-
-parser.add_argument("--corrector_steps", type=int, default=1)
 
 ##### about if we would print out eval metric for training data
 parser.add_argument("--eval_train", dest="eval_train", action="store_true")
