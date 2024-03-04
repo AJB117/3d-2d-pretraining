@@ -12,7 +12,7 @@ from torch_geometric.nn import global_mean_pool
 from tqdm import tqdm
 
 from config import args
-from Geom3D.models import GNN
+from Geom3D.models import GNN, EGNN
 from Geom3D.datasets import PCQM4Mv2
 from ogb.lsc import PCQM4Mv2Evaluator
 
@@ -51,6 +51,17 @@ def split(dataset):
 
 
 def model_setup():
+    if args.model_3d == "EGNN":
+        model = EGNN(
+            in_node_nf=num_node_classes,
+            in_edge_nf=num_edge_classes,
+            hidden_nf=args.emb_dim_egnn,
+            n_layers=args.n_layers_egnn,
+            positions_weight=args.positions_weight_egnn,
+            attention=args.attention_egnn,
+            node_attr=True,
+        )
+        graph_pred_linear = torch.nn.Linear(intermediate_dim, num_tasks)
     if args.model_2d == "GIN":
         model = GNN(
             args.num_layer,
@@ -118,7 +129,13 @@ def train(epoch, device, loader, optimizer):
     for step, batch in enumerate(L):
         batch = batch.to(device)
 
-        if args.model_2d == "GIN":
+        if args.model_3d == "EGNN":
+            pdb.set_trace()
+            node_repr, pos_3D_repr = model(
+                batch.x, batch.positions, batch.edge_index, batch.edge_attr
+            )
+            molecule_repr = global_mean_pool(node_repr, batch.batch)
+        elif args.model_2d == "GIN":
             node_repr = model(batch.x, batch.edge_index, batch.edge_attr)
             molecule_repr = global_mean_pool(node_repr, batch.batch)
 
@@ -130,7 +147,7 @@ def train(epoch, device, loader, optimizer):
         y = batch.y
 
         # normalize
-        # y = (y - mean) / std
+        y = (y - mean) / std
 
         loss = criterion(pred, y)
 
@@ -166,7 +183,12 @@ def eval(device, loader):
     for batch in L:
         batch = batch.to(device)
 
-        if args.model_2d == "GIN":
+        if args.model_3d == "EGNN":
+            node_repr, pos_3D_repr = model(
+                batch.x, batch.positions, batch.edge_index, batch.edge_attr
+            )
+            molecule_repr = global_mean_pool(node_repr, batch.batch)
+        elif args.model_2d == "GIN":
             node_repr = model(batch.x, batch.edge_index, batch.edge_attr)
             molecule_repr = global_mean_pool(node_repr, batch.batch)
 
@@ -176,8 +198,9 @@ def eval(device, loader):
             pred = molecule_repr.squeeze()
 
         y = batch.y
+
         # denormalize pred
-        # pred = (pred * std) + mean
+        pred = pred * std + mean
 
         y_true.append(y)
         y_scores.append(pred)
@@ -203,21 +226,39 @@ if __name__ == "__main__":
     num_tasks = 1
 
     assert args.dataset == "PCQM4Mv2"
-    data_root = "{}/{}".format(args.input_data_dir, args.dataset.lower())
+    data_root = "{}/{}".format(args.input_data_dir, args.dataset)
     dataset = PCQM4Mv2(data_root, transform=None)
 
-    train_dataset, valid_dataset, test_dataset = split(dataset)
+    if args.require_3d:
+        train_dataset_3d, _, _ = split(dataset)
+        total = len(train_dataset_3d)
+        val_len = int(total * 0.05)
+        test_len = int(total * 0.05)
+
+        val_idx = np.random.choice(total, val_len, replace=False)
+        test_idx = np.random.choice(total, test_len, replace=False)
+        train_idx = np.array(
+            [i for i in range(total) if i not in val_idx and i not in test_idx]
+        )
+
+        train_dataset_3d[train_idx]
+        valid_dataset_2d = dataset[val_idx]
+        test_dataset_2d = dataset[test_idx]
+    else:
+        train_dataset_3d, valid_dataset_2d, test_dataset_2d = split(dataset)
 
     try:
-        mean, std = torch.load(os.path.join(args.output_model_dir, "mean_std.pth"))
+        mean, std = torch.load(
+            os.path.join(args.output_model_dir, "pcqm4mv2_mean_std.pth")
+        )
     except FileNotFoundError:
         mean, std = (
-            dataset.mean().to(device).detach(),
-            dataset.std().to(device).detach(),
+            dataset.mean(),
+            dataset.std(),
         )
         torch.save(
             (mean, std),
-            os.path.join(args.output_model_dir, "mean_std.pth"),
+            os.path.join(args.output_model_dir, "pcqm4mv2_mean_std.pth"),
         )
 
     if args.loss == "mse":
@@ -230,21 +271,21 @@ if __name__ == "__main__":
     DataLoaderClass = DataLoader
     dataloader_kwargs = {}
     train_loader = DataLoaderClass(
-        train_dataset,
+        train_dataset_3d,
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=args.num_workers,
         **dataloader_kwargs,
     )
     val_loader = DataLoaderClass(
-        valid_dataset,
+        valid_dataset_2d,
         batch_size=args.batch_size,
         shuffle=False,
         num_workers=args.num_workers,
         **dataloader_kwargs,
     )
     test_loader = DataLoaderClass(
-        test_dataset,
+        test_dataset_2d,
         batch_size=args.batch_size,
         shuffle=False,
         num_workers=args.num_workers,
@@ -257,11 +298,15 @@ if __name__ == "__main__":
     else:
         intermediate_dim = args.emb_dim
 
-    node_class, edge_class = 119, 5
+    num_node_classes, num_edge_classes = 119, 5
     model, graph_pred_linear = model_setup()
 
     if args.input_model_file != "":
+        print("loading model from {}".format(args.input_model_file))
         load_model(model, graph_pred_linear, args.input_model_file, args.mode)
+    else:
+        print("fine-tuning from scratch...")
+
     model.to(device)
     print(model)
     if graph_pred_linear is not None:

@@ -14,7 +14,11 @@ from tqdm import tqdm
 
 from config import args
 from Geom3D.models import GNN, GraphPredLinear, SchNet
-from Geom3D.datasets import MoleculeDatasetQM9, MoleculeDataset3DRadius, GeneratedMoleculeDatasetQM9
+from Geom3D.datasets import (
+    MoleculeDatasetQM9,
+    MoleculeDataset3DRadius,
+    GeneratedMoleculeDatasetQM9,
+)
 from splitters import QM9_random_customized_01, QM9_random_customized_02, QM9_50k_split
 
 
@@ -326,7 +330,11 @@ if __name__ == "__main__":
     model, graph_pred_linear = model_setup()
 
     if args.input_model_file != "":
+        print(f"loading model from {args.input_model_file}...")
         load_model(model, graph_pred_linear, args.input_model_file)
+    else:
+        print("fine-tuning from scratch...")
+
     model.to(device)
     print(model)
     if graph_pred_linear is not None:
