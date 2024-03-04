@@ -1,21 +1,30 @@
+import pdb
 import os
 import torch
 import pandas as pd
 
+import os.path as osp
+from ogb.utils.torch_util import replace_numpy_with_torchtensor
 from tqdm import tqdm
 from rdkit import Chem
 from itertools import repeat
 from torch_geometric.data import InMemoryDataset
-from Geom3D.datasets.dataset_utils import mol_to_graph_data_obj_simple_3D
+from Geom3D.datasets.dataset_utils import (
+    mol_to_graph_data_obj_simple_3D,
+    mol_to_graph_data_obj_simple_2D,
+)
 
 
 class PCQM4Mv2(InMemoryDataset):
-    def __init__(self, root, transform=None, pre_transform=None, pre_filter=None):
+    def __init__(
+        self, root, transform=None, pre_transform=None, pre_filter=None, addHs=False
+    ):
         self.root = root
 
         self.transform = transform
         self.pre_transform = pre_transform
         self.pre_filter = pre_filter
+        self.addHs = addHs
         super(PCQM4Mv2, self).__init__(root, transform, pre_transform, pre_filter)
 
         self.data, self.slices = torch.load(self.processed_paths[0])
@@ -24,16 +33,15 @@ class PCQM4Mv2(InMemoryDataset):
 
     @property
     def raw_dir(self):
-        return os.path.join(self.root, 'raw')
+        return os.path.join(self.root, "raw")
 
     @property
     def processed_dir(self):
-        return os.path.join(self.root, 'processed')
+        return os.path.join(self.root, "processed")
 
     @property
     def raw_file_names(self):
-        name = 'pcqm4m-v2-train.sdf '
-        return name
+        return "pcqm4m-v2-train.sdf "
 
     @property
     def processed_file_names(self):
@@ -42,18 +50,38 @@ class PCQM4Mv2(InMemoryDataset):
     def download(self):
         pass
 
+    def get_idx_split(self):
+        split_dict = replace_numpy_with_torchtensor(
+            torch.load(osp.join(self.raw_dir, "split_dict.pt"))
+        )
+        return split_dict
+
+    def mean(self):
+        return self.data.y.mean().item()
+
+    def std(self):
+        return self.data.y.std().item()
+
     def process(self):
-        data_df = pd.read_csv(os.path.join(self.raw_dir, 'data.csv.gz'))
-        # smiles_list = data_df['smiles']
-        homolumogap_list = data_df['homolumogap']
+        data_df = pd.read_csv(os.path.join(self.raw_dir, "data.csv.gz"))
+        smiles_list = data_df["smiles"]
+        homolumogap_list = data_df["homolumogap"]
 
         data_list, data_smiles_list = [], []
 
         sdf_file = "{}/{}".format(self.raw_dir, self.raw_file_names).strip()
 
         suppl = Chem.SDMolSupplier(sdf_file)
-        for idx, mol in tqdm(enumerate(suppl)):
-            data, _ = mol_to_graph_data_obj_simple_3D(mol)
+        for idx, smiles in tqdm(enumerate(smiles_list)):
+            try:
+                mol = suppl[idx]
+                data, _ = mol_to_graph_data_obj_simple_3D(mol)
+            except:
+                mol = Chem.MolFromSmiles(smiles)
+                if self.addHs:
+                    mol = Chem.AddHs(mol)
+                data = mol_to_graph_data_obj_simple_2D(mol)
+
             data_list.append(data)
 
             smiles = Chem.MolToSmiles(mol)
@@ -77,19 +105,21 @@ class PCQM4Mv2(InMemoryDataset):
         return
 
     def __repr__(self):
-        return '{}({})'.format(self.name, len(self))
+        return "{}({})".format(self.name, len(self))
 
     def get(self, idx):
         data = self.data.__class__()
 
-        if hasattr(self.data, '__num_nodes__'):
+        if hasattr(self.data, "__num_nodes__"):
             data.num_nodes = self.data.__num_nodes__[idx]
 
         for key in self.data.keys:
             item, slices = self.data[key], self.slices[key]
             if torch.is_tensor(item):
                 s = list(repeat(slice(None), item.dim()))
-                s[self.data.__cat_dim__(key, item)] = slice(slices[idx], slices[idx + 1])
+                s[self.data.__cat_dim__(key, item)] = slice(
+                    slices[idx], slices[idx + 1]
+                )
             else:
                 s = slice(slices[idx], slices[idx + 1])
             data[key] = item[s]
