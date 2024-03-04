@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from torch_scatter import scatter
+from ogb.graphproppred.mol_encoder import AtomEncoder, BondEncoder
 
 
 def unsorted_segment_sum(data, segment_ids, num_segments):
@@ -28,7 +28,6 @@ class E_GCL(nn.Module):
         norm_diff=False,
         tanh=False,
     ):
-
         super(E_GCL, self).__init__()
         input_edge = input_nf * 2
         self.positions_weight = positions_weight
@@ -37,6 +36,8 @@ class E_GCL(nn.Module):
         self.norm_diff = norm_diff
         self.tanh = tanh
         edge_positions_nf = 1
+
+        self.bond_encoder = BondEncoder(hidden_nf)
 
         self.edge_mlp = nn.Sequential(
             nn.Linear(input_edge + edge_positions_nf + edges_in_d, hidden_nf),
@@ -92,13 +93,13 @@ class E_GCL(nn.Module):
         return out, agg
 
     def positions_model(self, positions, edge_index, positions_diff, edge_feat):
-        row, col = edge_index
+        row, _ = edge_index
         trans = positions_diff * self.positions_mlp(edge_feat)
         trans = torch.clamp(
             trans, min=-100, max=100
         )  # This is never activated but just in case it case it explosed it may save the train
         agg = unsorted_segment_sum(trans, row, num_segments=positions.size(0))
-        positions += agg * self.positions_weight
+        positions = positions + agg * self.positions_weight
         return positions
 
     def positions2radial(self, edge_index, positions):
@@ -109,7 +110,6 @@ class E_GCL(nn.Module):
         if self.norm_diff:
             norm = torch.sqrt(radial) + 1
             positions_diff = positions_diff / (norm)
-
         return radial, positions_diff
 
     def forward(self, h, positions, edge_index, node_attr=None, edge_attr=None):
@@ -124,16 +124,22 @@ class E_GCL(nn.Module):
         radial, positions_diff = self.positions2radial(
             edge_index, positions
         )  # (2N, 1), (N, 3)
-        edge_feat = self.edge_model(h[row], h[col], radial, edge_attr)  # (M, n_emb)
+        edge_embedding = self.bond_encoder(edge_attr)
+        edge_feat = self.edge_model(
+            h[row], h[col], radial, edge_attr=edge_embedding
+        )  # (M, n_emb)
 
-        # positions = self.positions_model(positions, edge_index, positions_diff, edge_feat)  # (M, 3)
+        positions = self.positions_model(
+            positions, edge_index, positions_diff, edge_feat
+        )  # (M, 3)
         h, agg = self.node_model(
             h, edge_index, edge_feat, node_attr
         )  # (N, emb_dim), (N, emb_dim*2 + input_node_dim)
         return h, positions, edge_attr
 
-
-    def forward_with_gathered_index(self, h, positions, edge_index, node_attr, periodic_index_mapping):
+    def forward_with_gathered_index(
+        self, h, positions, edge_index, node_attr, periodic_index_mapping
+    ):
         row, col = edge_index
         radial, positions_diff = self.positions2radial(
             edge_index, positions
@@ -141,13 +147,14 @@ class E_GCL(nn.Module):
 
         gathered_row = periodic_index_mapping[row]
         gathered_col = periodic_index_mapping[col]
-        edge_feat = self.edge_model(h[gathered_row], h[gathered_col], radial, edge_attr)  # (M, n_emb)
+        edge_feat = self.edge_model(
+            h[gathered_row], h[gathered_col], radial, edge_attr
+        )  # (M, n_emb)
 
         h, agg = self.node_model(
             h, edge_index, edge_feat, node_attr
         )  # (N, emb_dim), (N, emb_dim*2 + input_node_dim)
         return h, positions, edge_attr
-
 
 
 class EGNN(nn.Module):
@@ -166,7 +173,8 @@ class EGNN(nn.Module):
         self.hidden_nf = hidden_nf
         self.n_layers = n_layers
 
-        self.embedding = nn.Linear(in_node_nf, hidden_nf)
+        self.atom_encoder = AtomEncoder(hidden_nf)
+
         self.node_attr = node_attr
 
         if node_attr:
@@ -197,28 +205,30 @@ class EGNN(nn.Module):
         return
 
     def forward(self, x, positions, edge_index, edge_attr=None):
-        h = self.embedding(x)
+        h = self.atom_encoder(x)
 
         for i in range(self.n_layers):
-            if self.node_attr:
-                h, _, _ = self._modules["gcl_%d" % i](
-                    h, positions, edge_index, node_attr=x, edge_attr=edge_attr
-                )
-            else:
-                h, _, _ = self._modules["gcl_%d" % i](
-                    h, positions, edge_index, node_attr=None, edge_attr=edge_attr
-                )
+            node_attr = x if self.node_attr else None
+            h, positions, _ = self._modules["gcl_%d" % i](
+                h, positions, edge_index, node_attr=node_attr, edge_attr=edge_attr
+            )
 
         h = self.node_dec(h)
-        return h
+        return h, positions
 
-    def forward_with_gathered_index(self, gathered_x, positions, edge_index, periodic_index_mapping):
-        h = self.embedding(gathered_x)
+    def forward_with_gathered_index(
+        self, gathered_x, positions, edge_index, periodic_index_mapping
+    ):
+        h = self.atom_encoder(gathered_x)
 
         for i in range(self.n_layers):
             if self.node_attr:
                 h, _, _ = self._modules["gcl_%d" % i].forward_with_gathered_index(
-                    h, positions, edge_index, node_attr=gathered_x, periodic_index_mapping=periodic_index_mapping
+                    h,
+                    positions,
+                    edge_index,
+                    node_attr=gathered_x,
+                    periodic_index_mapping=periodic_index_mapping,
                 )
             # else:
             #     h, _, _ = self._modules["gcl_%d" % i](
@@ -227,3 +237,49 @@ class EGNN(nn.Module):
 
         h = self.node_dec(h)
         return h
+
+
+def get_edges(n_nodes):
+    rows, cols = [], []
+    for i in range(n_nodes):
+        for j in range(n_nodes):
+            if i != j:
+                rows.append(i)
+                cols.append(j)
+
+    edges = [rows, cols]
+    return edges
+
+
+def get_edges_batch(n_nodes, batch_size):
+    edges = get_edges(n_nodes)
+    edge_attr = torch.ones(len(edges[0]) * batch_size, 1)
+    edges = [torch.LongTensor(edges[0]), torch.LongTensor(edges[1])]
+    if batch_size == 1:
+        return edges, edge_attr
+    elif batch_size > 1:
+        rows, cols = [], []
+        for i in range(batch_size):
+            rows.append(edges[0] + n_nodes * i)
+            cols.append(edges[1] + n_nodes * i)
+        edges = [torch.cat(rows), torch.cat(cols)]
+    return edges, edge_attr
+
+
+if __name__ == "__main__":
+    # Dummy parameters
+    batch_size = 8
+    n_nodes = 16
+    n_feat = 1
+    x_dim = 3
+
+    # Dummy variables h, x and fully connected edges
+    h = torch.ones(batch_size * n_nodes, n_feat)
+    x = torch.rand(batch_size * n_nodes, x_dim)
+    edges, edge_attr = get_edges_batch(n_nodes, batch_size)
+
+    # Initialize EGNN
+    egnn = EGNN(in_node_nf=n_feat, hidden_nf=32, in_edge_nf=1)
+
+    # Run EGNN
+    h, x = egnn(h, x, edges, edge_attr)
