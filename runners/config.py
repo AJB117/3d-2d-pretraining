@@ -11,10 +11,7 @@ parser.add_argument(
     "--model_3d",
     type=str,
     default="SchNet",
-    choices=[
-        "SchNet",
-        "PaiNN",
-    ],
+    choices=["SchNet", "PaiNN", "EGNN"],
 )
 parser.add_argument(
     "--model_2d",
@@ -160,7 +157,31 @@ parser.add_argument(
     help="path of pretraining checkpoint to load",
 )
 parser.add_argument("--mode", type=str, default="MoleculeSDE", help="baseline to use")
-parser.add_argument("--use_generated_dataset", dest="use_generated_dataset", action="store_true")
+parser.add_argument(
+    "--use_generated_dataset", dest="use_generated_dataset", action="store_true"
+)
+
+### OUR METHOD, NOT MOLECULESDE/GRAPHMVP
+parser.add_argument("--input_model_file_3d", type=str, default="")
+
+# GNN_pos
+parser.add_argument("--num_layer_pos", type=int, default=3)
+parser.add_argument("--emb_dim_pos", type=int, default=64)
+parser.add_argument("--dropout_ratio_pos", type=float, default=0.2)
+parser.add_argument("--gnn_type_pos", type=str, default="GIN")
+parser.add_argument("--JK_pos", type=str, default="last")
+parser.add_argument("--gnn_2d_pos_lr_scale", type=float, default=1)
+
+# EGNN
+parser.add_argument("--emb_dim_egnn", type=int, default=300)
+parser.add_argument("--n_layers_egnn", type=int, default=5)
+parser.add_argument("--positions_weight_egnn", type=float, default=1.0)
+parser.add_argument("--attention_egnn", action="store_true")
+parser.add_argument(
+    "--require_3d",
+    action="store_true",
+    help="Require 3D data; PCQM4Mv2 only has 3D information for a subset of the dataset",
+)
 
 args = parser.parse_args()
 print("arguments\t", args)
