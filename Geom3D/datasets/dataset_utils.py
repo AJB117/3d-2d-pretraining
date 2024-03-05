@@ -1,5 +1,7 @@
 import pdb
 from collections import defaultdict
+import seaborn as sb
+import matplotlib.pyplot as plt
 
 import numpy as np
 import pandas as pd
@@ -110,8 +112,72 @@ def mol_to_graph_data_obj_simple_2D(mol):
         x=x,
         edge_index=edge_index,
         edge_attr=edge_attr,
+        positions=torch.empty((0, 3), dtype=torch.float),
+        bond_lengths=torch.empty((0, 1), dtype=torch.float),
+        bond_angles=torch.empty((0, 1), dtype=torch.float),
     )
     return data
+
+
+def get_angles(edges, atom_poses, dir_type="HT"):
+    def _get_angle(anchor, vec1, vec2):
+        vec1 = vec1 - anchor
+        vec2 = vec2 - anchor
+
+        norm1 = np.linalg.norm(vec1)
+        norm2 = np.linalg.norm(vec2)
+        if norm1 == 0 or norm2 == 0:
+            return 0
+        vec1 = vec1 / (norm1 + 1e-5)  # 1e-5: prevent numerical errors
+        vec2 = vec2 / (norm2 + 1e-5)
+        angle = np.arccos(np.dot(vec1, vec2))
+        return angle
+
+    # if there are E' bonds, then this will be E' x 3 where each row has 3 entries:
+    # anchor, src, tar which are all node indices
+    node_indices = []
+
+    E = len(edges.T)
+    edge_indices = np.arange(E)
+    bond_angles = []
+    bond_angle_dirs = []
+    for tar_edge_i in range(E):
+        tar_edge = edges.T[tar_edge_i]
+        if dir_type == "HT":
+            src_edge_indices = edge_indices[edges.T[:, 1] == tar_edge[0]]
+        elif dir_type == "HH":
+            src_edge_indices = edge_indices[edges.T[:, 1] == tar_edge[1]]
+        else:
+            raise ValueError(dir_type)
+        for src_edge_i in src_edge_indices:
+            if src_edge_i == tar_edge_i:
+                continue
+            src_edge = edges.T[src_edge_i]
+
+            if dir_type == "HT":
+                angle = _get_angle(
+                    atom_poses[tar_edge[0]],
+                    atom_poses[src_edge[1]],
+                    atom_poses[tar_edge[1]],
+                )
+            elif dir_type == "HH":
+                angle = _get_angle(
+                    atom_poses[tar_edge[1]],
+                    atom_poses[src_edge[0]],
+                    atom_poses[tar_edge[0]],
+                )
+
+            bond_angles.append(angle)
+            bond_angle_dirs.append(bool(src_edge[1] == tar_edge[0]))  # H -> H or H -> T
+
+            if dir_type == "HT":
+                node_indices.append([tar_edge[0], src_edge[1], tar_edge[1]])
+            elif dir_type == "HH":
+                node_indices.append([tar_edge[1], src_edge[0], tar_edge[0]])
+
+    node_indices = np.array(node_indices)
+    bond_angles = np.array(bond_angles, "float32")
+    return bond_angles, bond_angle_dirs, node_indices
 
 
 def mol_to_graph_data_obj_simple_3D(mol, pure_atomic_num=False):
@@ -159,15 +225,15 @@ def mol_to_graph_data_obj_simple_3D(mol, pure_atomic_num=False):
 
         bond_positions = positions[edge_index[0]] - positions[edge_index[1]]
         bond_lengths = torch.norm(bond_positions, dim=1).reshape(-1, 1)
-        bond_lengths = bond_lengths[::2]
 
-        bond_length_pair = positions[edge_index.T]
-        unit = bond_length_pair[:, 0, :] - bond_length_pair[:, 1, :]
-        unit_vector = unit / unit.norm(dim=-1).unsqueeze(1).repeat(1, 3)
-        direction_unit = torch.zeros(x.shape[0], 3)
-        for i in range(x.shape[0]):
-            direction_unit[i] = unit_vector[edge_index[0] == i].sum()
-        bond_angles = (direction_unit.norm(dim=-1) ** 2).unsqueeze(1)
+        bond_angles, angle_directions, node_indices = get_angles(
+            edge_index,
+            positions.detach().numpy(),
+            dir_type="HH",  # always use HH for now
+        )
+        bond_angles = torch.tensor(bond_angles, dtype=torch.float)
+        angle_directions = torch.tensor(angle_directions, dtype=torch.long)
+        node_indices = torch.tensor(node_indices, dtype=torch.long)
 
     else:  # mol has no bonds
         num_bond_features = 3  # bond type & direction
@@ -175,6 +241,8 @@ def mol_to_graph_data_obj_simple_3D(mol, pure_atomic_num=False):
         edge_attr = torch.empty((0, num_bond_features), dtype=torch.long)
         bond_lengths = torch.empty((0, 1), dtype=torch.float)
         bond_angles = torch.empty((0, 1), dtype=torch.float)
+        angle_directions = torch.empty((0, 1), dtype=torch.long)
+        node_indices = torch.empty((0, 3), dtype=torch.long)
 
     data = Data(
         x=x,
@@ -183,6 +251,8 @@ def mol_to_graph_data_obj_simple_3D(mol, pure_atomic_num=False):
         edge_attr=edge_attr,
         bond_lengths=bond_lengths,
         bond_angles=bond_angles,
+        angle_directions=angle_directions,
+        node_indices=node_indices,
     )
     return data, atom_count
 
