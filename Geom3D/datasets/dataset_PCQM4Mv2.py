@@ -57,10 +57,11 @@ class PCQM4Mv2(InMemoryDataset):
         return split_dict
 
     def mean(self):
-        return self.data.y.mean().item()
+        return self.y.nanmean(dim=0).item()
 
     def std(self):
-        return self.data.y.std().item()
+        y = self.y[~torch.isnan(self.y)]
+        return y.std().item()
 
     def process(self):
         data_df = pd.read_csv(os.path.join(self.raw_dir, "data.csv.gz"))
