@@ -183,14 +183,19 @@ def train(epoch, device, loader, optimizer):
     for step, batch in enumerate(L):
         batch = batch.to(device)
 
-        # molecule_2d_rep = model(batch.x, batch.edge_index, batch.edge_attr)
-        molecule_2d_rep = model(batch.x, batch.positions, batch=batch.batch)
+        if args.model_3d == "EGNN":
+            node_repr, pos_3D_repr = model(
+                batch.x, batch.positions, batch.edge_index, batch.edge_attr
+            )
+            molecule_repr = global_mean_pool(node_repr, batch.batch)
+        elif args.model_2d == "GIN":
+            node_repr = model(batch.x, batch.edge_index, batch.edge_attr)
+            molecule_repr = global_mean_pool(node_repr, batch.batch)
 
         if graph_pred_linear is not None:
-            # pred = graph_pred_linear(molecule_2d_rep, batch.batch).squeeze()
-            pred = graph_pred_linear(molecule_2d_rep).squeeze()
+            pred = graph_pred_linear(molecule_repr).squeeze()
         else:
-            pred = molecule_2d_rep.squeeze()
+            pred = molecule_repr.squeeze()
 
         B = pred.size()[0]
         y = batch.y.view(B, -1)[:, task_id]
@@ -232,14 +237,19 @@ def eval(device, loader):
     for batch in L:
         batch = batch.to(device)
 
-        # molecule_2d_rep = model(batch.x, batch.edge_index, batch.edge_attr)
-        molecule_2d_rep = model(batch.x, batch.positions, batch=batch.batch)
+        if args.model_3d == "EGNN":
+            node_repr, pos_3D_repr = model(
+                batch.x, batch.positions, batch.edge_index, batch.edge_attr
+            )
+            molecule_repr = global_mean_pool(node_repr, batch.batch)
+        elif args.model_2d == "GIN":
+            node_repr = model(batch.x, batch.edge_index, batch.edge_attr)
+            molecule_repr = global_mean_pool(node_repr, batch.batch)
 
         if graph_pred_linear is not None:
-            # pred = graph_pred_linear(molecule_2d_rep, batch.batch).squeeze()
-            pred = graph_pred_linear(molecule_2d_rep).squeeze()
+            pred = graph_pred_linear(molecule_repr).squeeze()
         else:
-            pred = molecule_2d_rep.squeeze()
+            pred = molecule_repr.squeeze()
 
         B = pred.size()[0]
         y = batch.y.view(B, -1)[:, task_id]
