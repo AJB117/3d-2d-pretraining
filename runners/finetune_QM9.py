@@ -13,10 +13,9 @@ from torch_geometric.nn import global_max_pool, global_mean_pool
 from tqdm import tqdm
 
 from config import args
-from Geom3D.models import GNN, GraphPredLinear, SchNet
+from Geom3D.models import GNN, GraphPredLinear, SchNet, EGNN
 from Geom3D.datasets import (
     MoleculeDatasetQM9,
-    MoleculeDataset3DRadius,
     GeneratedMoleculeDatasetQM9,
 )
 from splitters import QM9_random_customized_01, QM9_random_customized_02, QM9_50k_split
@@ -73,6 +72,19 @@ def split(dataset, data_root):
 
 
 def model_setup():
+    if args.model_3d == "EGNN":
+        model = EGNN(
+            in_node_nf=args.emb_dim_egnn,
+            in_edge_nf=args.emb_dim_egnn,
+            hidden_nf=args.emb_dim_egnn,
+            n_layers=args.n_layers_egnn,
+            positions_weight=args.positions_weight_egnn,
+            attention=args.attention_egnn,
+            node_attr=False,
+        )
+        graph_pred_linear = torch.nn.Linear(intermediate_dim, num_tasks)
+        return model, graph_pred_linear
+
     if args.model_3d == "SchNet":
         model = SchNet(
             hidden_channels=args.emb_dim,

@@ -53,15 +53,17 @@ def split(dataset):
 def model_setup():
     if args.model_3d == "EGNN":
         model = EGNN(
-            in_node_nf=num_node_classes,
-            in_edge_nf=num_edge_classes,
+            in_node_nf=args.emb_dim_egnn,
+            in_edge_nf=args.emb_dim_egnn,
             hidden_nf=args.emb_dim_egnn,
             n_layers=args.n_layers_egnn,
             positions_weight=args.positions_weight_egnn,
             attention=args.attention_egnn,
-            node_attr=True,
+            node_attr=False,
         )
         graph_pred_linear = torch.nn.Linear(intermediate_dim, num_tasks)
+        return model, graph_pred_linear
+
     if args.model_2d == "GIN":
         model = GNN(
             args.num_layer,
@@ -130,7 +132,6 @@ def train(epoch, device, loader, optimizer):
         batch = batch.to(device)
 
         if args.model_3d == "EGNN":
-            pdb.set_trace()
             node_repr, pos_3D_repr = model(
                 batch.x, batch.positions, batch.edge_index, batch.edge_attr
             )
@@ -212,6 +213,14 @@ def eval(device, loader):
     return mae, y_true, y_scores
 
 
+def get_random_indices(length, seed):
+    st0 = np.random.get_state()
+    np.random.seed(seed)
+    random_indices = np.random.permutation(length)
+    np.random.set_state(st0)
+    return random_indices
+
+
 if __name__ == "__main__":
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
@@ -230,20 +239,21 @@ if __name__ == "__main__":
     dataset = PCQM4Mv2(data_root, transform=None)
 
     if args.require_3d:
-        train_dataset_3d, _, _ = split(dataset)
-        total = len(train_dataset_3d)
+        train_dataset, _, _ = split(dataset)
+
+        total = len(train_dataset)
         val_len = int(total * 0.05)
         test_len = int(total * 0.05)
+        train_len = total - val_len - test_len
 
-        val_idx = np.random.choice(total, val_len, replace=False)
-        test_idx = np.random.choice(total, test_len, replace=False)
-        train_idx = np.array(
-            [i for i in range(total) if i not in val_idx and i not in test_idx]
-        )
+        all_idx = get_random_indices(total, args.seed)
+        train_idx = all_idx[:train_len]
+        val_idx = all_idx[train_len : train_len + val_len]
+        test_idx = all_idx[train_len + val_len :]
 
-        train_dataset_3d[train_idx]
-        valid_dataset_2d = dataset[val_idx]
-        test_dataset_2d = dataset[test_idx]
+        train_dataset_3d = train_dataset[train_idx]
+        valid_dataset_2d = train_dataset[val_idx]
+        test_dataset_2d = train_dataset[test_idx]
     else:
         train_dataset_3d, valid_dataset_2d, test_dataset_2d = split(dataset)
 
@@ -260,6 +270,8 @@ if __name__ == "__main__":
             (mean, std),
             os.path.join(args.output_model_dir, "pcqm4mv2_mean_std.pth"),
         )
+    
+    print("mean: {:.6f}\tstd: {:.6f}".format(mean, std))
 
     if args.loss == "mse":
         criterion = nn.MSELoss()
