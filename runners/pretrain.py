@@ -8,7 +8,7 @@ import torch.optim as optim
 
 from tqdm import tqdm
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import global_mean_pool
+from torch_geometric.nn import global_mean_pool, global_max_pool, global_add_pool
 
 from Geom3D.datasets import Molecule3DDataset
 from Geom3D.models import GNN, SchNet, EGNN
@@ -77,6 +77,35 @@ def save_model(save_best):
     return
 
 
+# credit to 3D Infomax (https://github.com/HannesStark/3DInfomax) for the following code
+def NTXentLoss(z1: torch.Tensor, z2: torch.Tensor, tau=0.1, norm=True):
+    sim_matrix = torch.einsum("ik, jk->ij", z1, z2)
+
+    if norm:
+        z1 = z1.norm(dim=1)
+        z2 = z2.norm(dim=1)
+        sim_matrix = sim_matrix / (torch.einsum("i, j->ij", z1, z2) + 1e-8)
+
+    sim_matrix = torch.exp(sim_matrix / tau)
+    pos_sim = sim_matrix.diag()
+
+    loss = pos_sim / (sim_matrix.sum(dim=1) - pos_sim)
+    loss = -torch.log(loss).mean()
+
+    return loss
+
+
+def pool(x, batch, pool="mean"):
+    if pool == "mean":
+        return global_mean_pool(x, batch)
+    elif pool == "sum":
+        return global_add_pool(x, batch)
+    elif pool == "max":
+        return global_max_pool(x, batch)
+    else:
+        raise NotImplementedError("Pool type not included.")
+
+
 def train(
     args,
     molecule_model_2D,
@@ -85,6 +114,11 @@ def train(
     device,
     loader,
     optimizer,
+    balances=[
+        1,
+        1,
+        1,
+    ],  # hyperparams corresponding to invariant loss, equivariant loss, hybrid loss
 ):
     start_time = time.time()
 
@@ -104,14 +138,26 @@ def train(
         node_2D_repr = molecule_model_2D(batch.x, batch.edge_index, batch.edge_attr)
         node_2D_pos_repr = molecule_model_2D_pos(
             batch.x, batch.edge_index, batch.edge_attr
-        )
+        )  # for synthetic coords
 
         if args.model_3d == "EGNN":
             node_3D_repr, pos_3D_repr = molecule_model_3D(
                 batch.x, batch.positions, batch.edge_index, batch.edge_attr
             )
 
-        loss = 0
+        ### invariant loss
+        mol_2d_repr = pool(node_2D_repr, batch.batch, pool=args.pooling)
+        mol_2d_repr = graph_pred_linear(mol_2d_repr)
+
+        mol_3d_repr = pool(node_3D_repr, batch.batch, pool=args.pooling)
+
+        invariant_loss = balances[0] * NTXentLoss(mol_2d_repr, mol_3d_repr)
+
+        ### equivariant loss
+
+        ### combined loss
+
+        loss = invariant_loss
 
         optimizer.zero_grad()
         loss.backward()
@@ -179,8 +225,6 @@ if __name__ == "__main__":
         gnn_type=args.gnn_type_pos,
     ).to(device)
 
-    molecule_readout_func = global_mean_pool
-
     print("Using 3d model\t", args.model_3d)
     if args.model_3d == "SchNet":
         molecule_model_3D = SchNet(
@@ -206,11 +250,24 @@ if __name__ == "__main__":
     else:
         raise NotImplementedError("Model {} not included.".format(args.model_3d))
 
+    if args.JK == "concat":
+        intermediate_dim = (args.num_layer + 1) * args.emb_dim
+    else:
+        intermediate_dim = args.emb_dim
+
+    graph_pred_linear = nn.Sequential(
+        nn.Linear(intermediate_dim, intermediate_dim // 2),
+        nn.BatchNorm1d(intermediate_dim // 2),
+        nn.ReLU(),
+        nn.Linear(intermediate_dim // 2, intermediate_dim // 2),
+    ).to(device)
+
     model_weight = torch.load(args.input_model_file_3d)
     if "model_3D" in model_weight:
         molecule_model_3D.load_state_dict(model_weight["model_3D"])
 
     model_param_group = []
+    model_param_group.append({"params": graph_pred_linear.parameters(), "lr": args.lr})
     model_param_group.append(
         {"params": molecule_model_2D.parameters(), "lr": args.lr * args.gnn_2d_lr_scale}
     )
