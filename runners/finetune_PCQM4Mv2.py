@@ -270,7 +270,7 @@ if __name__ == "__main__":
             (mean, std),
             os.path.join(args.output_model_dir, "pcqm4mv2_mean_std.pth"),
         )
-    
+
     print("mean: {:.6f}\tstd: {:.6f}".format(mean, std))
 
     if args.loss == "mse":

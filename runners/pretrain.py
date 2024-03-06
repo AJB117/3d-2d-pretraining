@@ -17,6 +17,8 @@ from ogb.utils.features import get_atom_feature_dims
 
 
 CE_criterion = nn.CrossEntropyLoss()
+MSE_criterion = nn.MSELoss()
+MAE_criterion = nn.L1Loss()
 
 ogb_feat_dim = get_atom_feature_dims()
 ogb_feat_dim = [x - 1 for x in ogb_feat_dim]
@@ -30,51 +32,43 @@ def compute_accuracy(pred, target):
     ) / len(pred)
 
 
-def do_2D_masking(batch, node_repr, molecule_atom_masking_model, masked_atom_indices):
-    target = batch.x[masked_atom_indices][:, 0].detach()
-    node_pred = molecule_atom_masking_model(node_repr[masked_atom_indices])
-    loss = CE_criterion(node_pred, target)
-    acc = compute_accuracy(node_pred, target)
-    return loss, acc
+def perturb(synthetic_pos, pos, rot_mu=0, rot_sigma=0.1, trans_mu=0, trans_sigma=1):
+    random_matrix = torch.normal(rot_mu, rot_sigma, size=pos.size())
+    Q_E3, _ = torch.qr(random_matrix)
+    random_translation = torch.normal(trans_mu, trans_sigma, size=(1, 3))
+    perturbed_pos = Q_E3 @ pos + random_translation
 
-
-def perturb(x, positions, mu, sigma):
-    x_perturb = x
-
-    device = positions.device
-    positions_perturb = positions + torch.normal(mu, sigma, size=positions.size()).to(
-        device
+    random_matrix = torch.normal(rot_mu, rot_sigma, size=synthetic_pos.size())
+    Q_EN, _ = torch.qr(random_matrix)
+    random_translation = torch.normal(
+        trans_mu, trans_sigma, size=(1, synthetic_pos.size(1))
     )
+    perturbed_synthetic_pos = Q_EN @ synthetic_pos + random_translation
 
-    return x_perturb, positions_perturb
+    return perturbed_pos, perturbed_synthetic_pos
 
 
 def save_model(save_best):
-    if not args.output_model_dir == "":
-        if save_best:
-            global optimal_loss
-            print("save model with loss: {:.5f}".format(optimal_loss))
-            output_model_path = os.path.join(
-                args.output_model_dir, "model_complete.pth"
-            )
-            saver_dict = {
-                "model_2D": molecule_model_2D.state_dict(),
-                "model_2D_pos": molecule_model_2D.state_dict(),
-                "model_3D": molecule_model_3D.state_dict(),
-            }
-            torch.save(saver_dict, output_model_path)
+    if args.output_model_dir == "":
+        return
 
-        else:
-            output_model_path = os.path.join(
-                args.output_model_dir, "model_complete_final.pth"
-            )
-            saver_dict = {
-                "model_2D": molecule_model_2D.state_dict(),
-                "model_2D_pos": molecule_model_2D.state_dict(),
-                "model_3D": molecule_model_3D.state_dict(),
-            }
-            torch.save(saver_dict, output_model_path)
-    return
+    saver_dict = {
+        "graph_pred_linear": graph_pred_linear.state_dict(),
+        "down_project": down_project.state_dict(),
+        "model_2D": molecule_model_2D.state_dict(),
+        "model_2D_pos": molecule_model_2D.state_dict(),
+        "model_3D": molecule_model_3D.state_dict(),
+    }
+    if save_best:
+        global optimal_loss
+        print("save model with loss: {:.5f}".format(optimal_loss))
+        output_model_path = os.path.join(args.output_model_dir, "model_complete.pth")
+    else:
+        output_model_path = os.path.join(
+            args.output_model_dir, "model_complete_final.pth"
+        )
+
+    torch.save(saver_dict, output_model_path)
 
 
 # credit to 3D Infomax (https://github.com/HannesStark/3DInfomax) for the following code
@@ -154,6 +148,7 @@ def train(
         invariant_loss = balances[0] * NTXentLoss(mol_2d_repr, mol_3d_repr)
 
         ### equivariant loss
+        pos_hat = down_project(node_2D_pos_repr)
 
         ### combined loss
 
@@ -262,12 +257,33 @@ if __name__ == "__main__":
         nn.Linear(intermediate_dim // 2, intermediate_dim // 2),
     ).to(device)
 
+    down_project = nn.Sequential(
+        nn.Linear(intermediate_dim, intermediate_dim // 2),
+        nn.BatchNorm1d(intermediate_dim // 2),
+        nn.ReLU(),
+        nn.Linear(
+            intermediate_dim // 2,
+            intermediate_dim // 4,
+        ),
+        nn.BatchNorm1d(intermediate_dim // 2),
+        nn.ReLU(),
+        nn.Linear(
+            intermediate_dim // 4,
+            intermediate_dim // 8,
+        ),
+        nn.Linear(
+            intermediate_dim // 8,
+            3,
+        ),
+    ).to(device)
+
     model_weight = torch.load(args.input_model_file_3d)
     if "model_3D" in model_weight:
         molecule_model_3D.load_state_dict(model_weight["model_3D"])
 
     model_param_group = []
     model_param_group.append({"params": graph_pred_linear.parameters(), "lr": args.lr})
+    model_param_group.append({"params": down_project.parameters(), "lr": args.lr})
     model_param_group.append(
         {"params": molecule_model_2D.parameters(), "lr": args.lr * args.gnn_2d_lr_scale}
     )
