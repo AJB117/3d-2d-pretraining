@@ -32,20 +32,29 @@ def compute_accuracy(pred, target):
     ) / len(pred)
 
 
-def perturb(synthetic_pos, pos, rot_mu=0, rot_sigma=0.1, trans_mu=0, trans_sigma=1):
-    random_matrix = torch.normal(rot_mu, rot_sigma, size=pos.size())
-    Q_E3, _ = torch.qr(random_matrix)
-    random_translation = torch.normal(trans_mu, trans_sigma, size=(1, 3))
-    perturbed_pos = Q_E3 @ pos + random_translation
+def perturb(
+    pos,
+    rotation=None,
+    translation=None,
+    rot_mu=0,
+    rot_sigma=0.1,
+    trans_mu=0,
+    trans_sigma=1,
+):
+    if rotation is None:
+        random_matrix = torch.normal(rot_mu, rot_sigma, size=pos.size())
+        rotation, _ = torch.qr(random_matrix)
 
-    random_matrix = torch.normal(rot_mu, rot_sigma, size=synthetic_pos.size())
-    Q_EN, _ = torch.qr(random_matrix)
-    random_translation = torch.normal(
-        trans_mu, trans_sigma, size=(1, synthetic_pos.size(1))
-    )
-    perturbed_synthetic_pos = Q_EN @ synthetic_pos + random_translation
+    if translation is None:
+        translation = torch.normal(trans_mu, trans_sigma, size=(1, 3))
 
-    return perturbed_pos, perturbed_synthetic_pos
+    perturbed_pos = rotation @ pos + translation
+
+    return (
+        perturbed_pos,
+        rotation,
+        translation,
+    )  # return rotation and translation for debugging
 
 
 def save_model(save_best):
@@ -148,7 +157,14 @@ def train(
         invariant_loss = balances[0] * NTXentLoss(mol_2d_repr, mol_3d_repr)
 
         ### equivariant loss
-        pos_hat = down_project(node_2D_pos_repr)
+        pos_synth = down_project(node_2D_pos_repr)
+
+        perturbed_pos, _, _ = perturb(node_2D_pos_repr)
+        perturbed_pos_synth, _, _ = perturb(pos_synth)
+
+        rot_loss = (
+            perturbed_pos.T @ node_2D_pos_repr - perturbed_pos_synth.T @ pos_synth
+        )
 
         ### combined loss
 
