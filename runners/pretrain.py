@@ -10,7 +10,7 @@ from tqdm import tqdm
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import global_mean_pool, global_max_pool, global_add_pool
 
-from Geom3D.datasets import Molecule3DDataset
+from Geom3D.datasets import Molecule3DDataset, MoleculeDatasetQM9
 from Geom3D.models import GNN, SchNet, EGNN
 from config import args
 from ogb.utils.features import get_atom_feature_dims
@@ -221,9 +221,9 @@ def train(
 
         ## bond angle prediction
         bond_angles = batch.bond_angles  # E' x 3 x 1, [anchor, src, dst, angle]
-        anchor_emb = node_2D_repr[batch.bond_angles[:, 0]]
-        src_emb = node_2D_repr[batch.bond_angles[:, 1]]
-        dst_emb = node_2D_repr[batch.bond_angles[:, 2]]
+        anchor_emb = node_2D_repr[batch.bond_angles[:, 0].long()]
+        src_emb = node_2D_repr[batch.bond_angles[:, 1].long()]
+        dst_emb = node_2D_repr[batch.bond_angles[:, 2].long()]
 
         bond_angle_pred = bond_angle_predictor(
             torch.cat([src_emb, anchor_emb, dst_emb], dim=1)
@@ -294,14 +294,23 @@ if __name__ == "__main__":
 
     transform = None
     data_root = "{}/{}".format(args.input_data_dir, args.dataset)
-    dataset = Molecule3DDataset(
-        data_root,
-        args.dataset,
-        mask_ratio=args.SSL_masking_ratio,
-        remove_center=True,
-        use_extend_graph=args.use_extend_graph,
-        transform=transform,
-    )
+    try:
+        dataset = Molecule3DDataset(
+            data_root,
+            args.dataset,
+            mask_ratio=args.SSL_masking_ratio,
+            remove_center=True,
+            use_extend_graph=args.use_extend_graph,
+            transform=transform,
+        )
+    except FileNotFoundError:
+        if args.dataset == "QM9":
+            data_root = "data/molecule_datasets/{}".format(args.dataset)
+            MoleculeDatasetQM9(
+                data_root,
+                dataset=args.dataset,
+                task=args.task,
+            ).process()
 
     loader = DataLoader(
         dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers
