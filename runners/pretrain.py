@@ -16,10 +16,6 @@ from config import args
 from ogb.utils.features import get_atom_feature_dims
 
 
-CE_criterion = nn.CrossEntropyLoss()
-MSE_criterion = nn.MSELoss()
-MAE_criterion = nn.L1Loss()
-
 ogb_feat_dim = get_atom_feature_dims()
 ogb_feat_dim = [x - 1 for x in ogb_feat_dim]
 ogb_feat_dim[-2] = 0
@@ -48,10 +44,12 @@ def perturb(
     if translation is None:
         translation = torch.normal(trans_mu, trans_sigma, size=(1, 3))
 
-    perturbed_pos = rotation @ pos + translation
+    rotated_pos = rotation @ pos
+    translated_pos = pos + translation
 
     return (
-        perturbed_pos,
+        rotated_pos,
+        translated_pos,
         rotation,
         translation,
     )  # return rotation and translation for debugging
@@ -109,6 +107,34 @@ def pool(x, batch, pool="mean"):
         raise NotImplementedError("Pool type not included.")
 
 
+def CL_acc(x1, x2, pos_mask=None):
+    batch_size, _ = x1.size()
+    if (
+        x1.shape != x2.shape and pos_mask is None
+    ):  # if we have noisy samples our x2 has them appended at the end so we just take the non noised ones to calculate the similaritiy
+        x2 = x2[:batch_size]
+    sim_matrix = torch.einsum("ik,jk->ij", x1, x2)
+
+    x1_abs = x1.norm(dim=1)
+    x2_abs = x2.norm(dim=1)
+    sim_matrix = sim_matrix / torch.einsum("i,j->ij", x1_abs, x2_abs)
+
+    preds = (sim_matrix + 1) / 2 > 0.5
+    if pos_mask is None:  # if we are comparing global with global
+        pos_mask = torch.eye(batch_size, device=x1.device)
+    neg_mask = 1 - pos_mask
+
+    num_positives = len(x1)
+    num_negatives = len(x1) * (len(x2) - 1)
+    true_positives = (
+        num_positives - ((preds.long() - pos_mask) * pos_mask).count_nonzero()
+    )
+    true_negatives = (
+        num_negatives - (((~preds).long() - neg_mask) * neg_mask).count_nonzero()
+    )
+    return (true_positives / num_positives + true_negatives / num_negatives) / 2
+
+
 def train(
     args,
     molecule_model_2D,
@@ -121,7 +147,8 @@ def train(
         1,
         1,
         1,
-    ],  # hyperparams corresponding to invariant loss, equivariant loss, hybrid loss
+        1,
+    ],  # hyperparams corresponding to invariant loss, equivariant loss, hybrid loss, matching loss
 ):
     start_time = time.time()
 
@@ -130,6 +157,12 @@ def train(
     molecule_model_3D.eval()
 
     CL_loss_accum, CL_acc_accum = 0, 0
+    rot_loss_accum = 0
+    trans_loss_accum = 0
+    bond_length_loss_accum = 0
+    bond_angle_loss_accum = 0
+    matching_loss_accum = 0
+    loss_accum = 0
 
     if args.verbose:
         l = tqdm(loader)
@@ -148,27 +181,64 @@ def train(
                 batch.x, batch.positions, batch.edge_index, batch.edge_attr
             )
 
-        ### invariant loss
+        # invariant loss
         mol_2d_repr = pool(node_2D_repr, batch.batch, pool=args.pooling)
         mol_2d_repr = graph_pred_linear(mol_2d_repr)
 
         mol_3d_repr = pool(node_3D_repr, batch.batch, pool=args.pooling)
 
         invariant_loss = balances[0] * NTXentLoss(mol_2d_repr, mol_3d_repr)
+        CL_loss_accum += invariant_loss
+        CL_acc_accum += CL_acc(mol_2d_repr, mol_3d_repr)
 
-        ### equivariant loss
+        # equivariant loss
         pos_synth = down_project(node_2D_pos_repr)
 
-        perturbed_pos, _, _ = perturb(node_2D_pos_repr)
-        perturbed_pos_synth, _, _ = perturb(pos_synth)
+        rotated_pos, translated_pos, _, _ = perturb(node_2D_pos_repr)
+        rotated_pos_synth, translated_pos_synth, _, _ = perturb(pos_synth)
 
-        rot_loss = (
-            perturbed_pos.T @ node_2D_pos_repr - perturbed_pos_synth.T @ pos_synth
+        rot_loss = rotated_pos.T @ node_2D_pos_repr - rotated_pos_synth.T @ pos_synth
+        rot_loss_accum += rot_loss
+
+        trans_loss = (translated_pos - node_2D_pos_repr) - (
+            translated_pos_synth - pos_synth
         )
+        trans_loss_accum += trans_loss
 
-        ### combined loss
+        equiv_loss = balances[1] * (rot_loss + trans_loss)
 
-        loss = invariant_loss
+        # hybrid loss
+        node_2D_repr = torch.cat([node_2D_repr, pos_synth], dim=1)  # N x (F + 3)
+
+        ## bond length prediction
+        bond_lengths = batch.bond_lengths  # E x 1, [edge_idx, length]
+        i_emb = node_2D_repr[batch.edge_index[0]]
+        j_emb = node_2D_repr[batch.edge_index[1]]
+
+        bond_length_pred = bond_length_predictor(torch.cat([i_emb, j_emb], dim=1))
+        bond_length_loss = nn.MSELoss(bond_length_pred, bond_lengths.unsqueeze(1))
+        bond_length_loss_accum += bond_length_loss
+
+        ## bond angle prediction
+        bond_angles = batch.bond_angles  # E' x 3 x 1, [anchor, src, dst, angle]
+        anchor_emb = node_2D_repr[batch.bond_angles[:, 0]]
+        src_emb = node_2D_repr[batch.bond_angles[:, 1]]
+        dst_emb = node_2D_repr[batch.bond_angles[:, 2]]
+
+        bond_angle_pred = bond_angle_predictor(
+            torch.cat([src_emb, anchor_emb, dst_emb], dim=1)
+        )
+        bond_angle_loss = nn.MSELoss(bond_angle_pred, bond_angles)
+        bond_angle_loss_accum += bond_angle_loss
+
+        hybrid_loss = balances[2] * (bond_length_loss + bond_angle_loss)
+
+        # matching loss
+        matching_loss = balances[3] * nn.MSELoss(pos_synth, pos_3D_repr)
+        matching_loss_accum += matching_loss
+
+        loss = invariant_loss + equiv_loss + hybrid_loss + matching_loss
+        loss_accum += loss
 
         optimizer.zero_grad()
         loss.backward()
@@ -178,6 +248,13 @@ def train(
     CL_loss_accum /= len(loader)
     CL_acc_accum /= len(loader)
 
+    rot_loss_accum /= len(loader)
+    trans_loss_accum /= len(loader)
+    bond_length_loss_accum /= len(loader)
+    bond_angle_loss_accum /= len(loader)
+    matching_loss_accum /= len(loader)
+    loss_accum /= len(loader)
+
     temp_loss = 0  # todo
 
     if temp_loss < optimal_loss:
@@ -185,6 +262,17 @@ def train(
         save_model(save_best=True)
 
     print("CL Loss: {:.5f}\tCL Acc: {:.5f}".format(CL_loss_accum, CL_acc_accum))
+    print(
+        "Rot Loss: {:.5f}\tTrans Loss: {:.5f}".format(rot_loss_accum, trans_loss_accum)
+    )
+    print(
+        "Bond Length Loss: {:.5f}\tBond Angle Loss: {:.5f}".format(
+            bond_length_loss_accum, bond_angle_loss_accum
+        )
+    )
+    print("Matching Loss: {:.5f}".format(matching_loss_accum))
+    print("Total Loss: {:.5f}".format(loss_accum))
+
     print("Time: {:.5f}\n".format(time.time() - start_time))
     return
 
@@ -293,13 +381,37 @@ if __name__ == "__main__":
         ),
     ).to(device)
 
+    bond_length_predictor = nn.Sequential(
+        nn.Linear((intermediate_dim + 3) * 2, intermediate_dim),
+        nn.BatchNorm1d(intermediate_dim),
+        nn.ReLU(),
+        nn.Linear(intermediate_dim, 1),
+    ).to(device)
+
+    bond_angle_predictor = nn.Sequential(
+        nn.Linear((intermediate_dim + 3) * 3, intermediate_dim),
+        nn.BatchNorm1d(intermediate_dim),
+        nn.ReLU(),
+        nn.Linear(intermediate_dim, 1),
+    ).to(device)
+
     model_weight = torch.load(args.input_model_file_3d)
     if "model_3D" in model_weight:
         molecule_model_3D.load_state_dict(model_weight["model_3D"])
 
     model_param_group = []
+
+    # MLP heads
     model_param_group.append({"params": graph_pred_linear.parameters(), "lr": args.lr})
     model_param_group.append({"params": down_project.parameters(), "lr": args.lr})
+    model_param_group.append(
+        {"params": bond_length_predictor.parameters(), "lr": args.lr}
+    )
+    model_param_group.append(
+        {"params": bond_angle_predictor.parameters(), "lr": args.lr}
+    )
+
+    # GNNs
     model_param_group.append(
         {"params": molecule_model_2D.parameters(), "lr": args.lr * args.gnn_2d_lr_scale}
     )
