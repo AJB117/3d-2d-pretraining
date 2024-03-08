@@ -73,7 +73,7 @@ class PCQM4Mv2(InMemoryDataset):
         sdf_file = "{}/{}".format(self.raw_dir, self.raw_file_names).strip()
 
         suppl = Chem.SDMolSupplier(sdf_file)
-        for idx, smiles in tqdm(enumerate(smiles_list)):
+        for idx, smiles in enumerate(tqdm(smiles_list)):
             try:
                 mol = suppl[idx]
                 data, _ = mol_to_graph_data_obj_simple_3D(mol)

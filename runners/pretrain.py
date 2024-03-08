@@ -311,6 +311,14 @@ if __name__ == "__main__":
                 dataset=args.dataset,
                 task=args.task,
             ).process()
+        dataset = Molecule3DDataset(
+            data_root,
+            args.dataset,
+            mask_ratio=args.SSL_masking_ratio,
+            remove_center=True,
+            use_extend_graph=args.use_extend_graph,
+            transform=transform,
+        )
 
     loader = DataLoader(
         dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers

@@ -114,7 +114,7 @@ def mol_to_graph_data_obj_simple_2D(mol):
         edge_attr=edge_attr,
         positions=torch.empty((0, 3), dtype=torch.float),
         bond_lengths=torch.empty((0, 1), dtype=torch.float),
-        bond_angles=torch.empty((0, 1), dtype=torch.float),
+        bond_angles=torch.empty((0, 4), dtype=torch.float),
         angle_directions=torch.empty((0, 1), dtype=torch.long),
     )
     return data
@@ -200,6 +200,7 @@ def get_angles(edges, atom_poses, dir_type="HT", get_complement_angles=False):
     bond_angles = torch.tensor(bond_angles, dtype=torch.float32)
 
     bond_angles = torch.cat([bond_angle_indices, bond_angles.unsqueeze(-1)], dim=1)
+    bond_angle_dirs = torch.tensor(bond_angle_dirs, dtype=torch.long)
 
     return bond_angles, bond_angle_dirs
 
@@ -264,7 +265,7 @@ def mol_to_graph_data_obj_simple_3D(
         edge_index = torch.empty((2, 0), dtype=torch.long)
         edge_attr = torch.empty((0, num_bond_features), dtype=torch.long)
         bond_lengths = torch.empty((0, 1), dtype=torch.float)
-        bond_angles = torch.empty((0, 1), dtype=torch.float)
+        bond_angles = torch.empty((0, 4), dtype=torch.float)
         angle_directions = torch.empty((0, 1), dtype=torch.long)
 
     data = Data(
