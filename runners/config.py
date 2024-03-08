@@ -182,6 +182,8 @@ parser.add_argument(
     action="store_true",
     help="Require 3D data; PCQM4Mv2 only has 3D information for a subset of the dataset",
 )
+parser.add_argument("--output_model_name", type=str, default="model")
+parser.add_argument("--process_num", type=int, default=1)
 
 args = parser.parse_args()
 print("arguments\t", args)

@@ -1,3 +1,4 @@
+import csv
 import pdb
 import time
 import random
@@ -69,6 +70,8 @@ def save_model(save_best):
     if args.output_model_dir == "":
         return
 
+    model_name = args.output_model_name
+
     saver_dict = {
         "graph_pred_linear": graph_pred_linear.state_dict(),
         "down_project": down_project.state_dict(),
@@ -78,11 +81,13 @@ def save_model(save_best):
     }
     if save_best:
         global optimal_loss
-        print("save model with loss: {:.5f}".format(optimal_loss))
-        output_model_path = os.path.join(args.output_model_dir, "model_complete.pth")
+        print("save model with loss: {:.5f}\n".format(optimal_loss))
+        output_model_path = os.path.join(
+            args.output_model_dir, f"{model_name}_complete.pth"
+        )
     else:
         output_model_path = os.path.join(
-            args.output_model_dir, "model_complete_final.pth"
+            args.output_model_dir, f"{model_name}_complete_final.pth"
         )
 
     torch.save(saver_dict, output_model_path)
@@ -178,6 +183,9 @@ def train(
         l = tqdm(loader)
     else:
         l = loader
+
+    num_iters = len(loader)
+
     for step, batch in enumerate(l):
         batch = batch.to(device)
 
@@ -263,6 +271,15 @@ def train(
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        if args.lr_scheduler in ["CosineAnnealingWarmRestarts"]:
+            lr_scheduler.step(epoch - 1 + step / num_iters)
+
+            loss_accum /= len(loader)
+
+    if args.lr_scheduler in ["StepLR", "CosineAnnealingLR"]:
+        lr_scheduler.step()
+    elif args.lr_scheduler in ["ReduceLROnPlateau"]:
+        lr_scheduler.step(loss_accum)
 
     global optimal_loss
     CL_loss_accum /= len(loader)
@@ -274,12 +291,6 @@ def train(
     bond_angle_loss_accum /= len(loader)
     matching_loss_accum /= len(loader)
     loss_accum /= len(loader)
-
-    temp_loss = 0  # todo
-
-    if temp_loss < optimal_loss:
-        optimal_loss = temp_loss
-        save_model(save_best=True)
 
     print("CL Loss: {:.5f}\tCL Acc: {:.5f}".format(CL_loss_accum, CL_acc_accum))
     print(
@@ -294,7 +305,26 @@ def train(
     print("Total Loss: {:.5f}".format(loss_accum))
 
     print("Time: {:.5f}\n".format(time.time() - start_time))
-    return
+
+    temp_loss = loss_accum
+
+    if temp_loss < optimal_loss:
+        optimal_loss = temp_loss
+        save_model(save_best=True)
+
+    loss_dict = {
+        "CL_loss_accum": CL_loss_accum.item(),
+        "CL_acc_accum": CL_acc_accum.item(),
+        "rot_loss_accum": rot_loss_accum.item(),
+        "trans_loss_accum": trans_loss_accum.item(),
+        "bond_length_loss_accum": bond_length_loss_accum.item(),
+        "bond_angle_loss_accum": bond_angle_loss_accum.item(),
+        "matching_loss_accum": matching_loss_accum.item(),
+        "pretrain_loss_accum": loss_accum.item(),
+        "pretrain_optimal_loss": optimal_loss.item(),
+    }
+
+    return loss_dict
 
 
 if __name__ == "__main__":
@@ -470,9 +500,36 @@ if __name__ == "__main__":
     optimizer = optim.Adam(model_param_group, lr=args.lr, weight_decay=args.decay)
     optimal_loss = 1e10
 
+    lr_scheduler = None
+    if args.lr_scheduler == "CosineAnnealingLR":
+        lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, args.epochs
+        )
+        print("Apply lr scheduler CosineAnnealingLR")
+    elif args.lr_scheduler == "CosineAnnealingWarmRestarts":
+        lr_scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            optimizer, args.epochs, eta_min=1e-4
+        )
+        print("Apply lr scheduler CosineAnnealingWarmRestarts")
+    elif args.lr_scheduler == "StepLR":
+        lr_scheduler = optim.lr_scheduler.StepLR(
+            optimizer, step_size=args.lr_decay_step_size, gamma=args.lr_decay_factor
+        )
+        print("Apply lr scheduler StepLR")
+    elif args.lr_scheduler == "ReduceLROnPlateau":
+        lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            factor=args.lr_decay_factor,
+            patience=args.lr_decay_patience,
+            min_lr=args.min_lr,
+        )
+        print("Apply lr scheduler ReduceLROnPlateau")
+    else:
+        print("lr scheduler {} is not included.".format(args.lr_scheduler))
+
     for epoch in range(1, args.epochs + 1):
         print("epoch: {}".format(epoch))
-        train(
+        loss_dict = train(
             args,
             molecule_model_2D,
             molecule_model_2D_pos,
@@ -481,5 +538,32 @@ if __name__ == "__main__":
             loader,
             optimizer,
         )
+
+    with open("config.csv", "r") as f:
+        reader = csv.reader(f)
+        num_rows = len(list(reader))
+
+    with open("config.csv", "a") as f:
+        writer = csv.writer(f)
+
+        dict_args = vars(args)
+        dict_args.update(loss_dict)
+
+        # just increment if no name is given
+        args.output_model_name = f"{args.output_model_name}_{num_rows+1}"
+        dict_args["pretrain_save_location"] = os.path.join(
+            args.output_model_dir, f"{args.output_model_name}_complete.pth"
+        )
+
+        # to be updated in the downstream task training runs
+        dict_args["finetune_train_mae"] = 0
+        dict_args["finetune_val_mae"] = 0
+        dict_args["finetune_test_mae"] = 0
+
+        header = dict_args.keys()
+        if num_rows == 0:
+            writer.writerow(header)
+
+        writer.writerow(dict_args.values())
 
     save_model(save_best=False)
