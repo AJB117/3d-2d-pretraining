@@ -1,3 +1,4 @@
+import pdb
 import time
 import random
 import os
@@ -21,6 +22,9 @@ ogb_feat_dim = [x - 1 for x in ogb_feat_dim]
 ogb_feat_dim[-2] = 0
 ogb_feat_dim[-1] = 0
 
+mae_loss = nn.L1Loss()
+mse_loss = nn.MSELoss()
+
 
 def compute_accuracy(pred, target):
     return float(
@@ -36,15 +40,21 @@ def perturb(
     rot_sigma=0.1,
     trans_mu=0,
     trans_sigma=1,
+    device="cuda",
 ):
     if rotation is None:
-        random_matrix = torch.normal(rot_mu, rot_sigma, size=pos.size())
+        random_matrix = torch.normal(
+            rot_mu, rot_sigma, size=(pos.shape[1], pos.shape[1])
+        )
         rotation, _ = torch.qr(random_matrix)
 
     if translation is None:
-        translation = torch.normal(trans_mu, trans_sigma, size=(1, 3))
+        translation = torch.normal(trans_mu, trans_sigma, size=(1, pos.shape[1]))
 
-    rotated_pos = rotation @ pos
+    rotation = rotation.to(device)
+    translation = translation.to(device)
+
+    rotated_pos = rotation @ pos.T
     translated_pos = pos + translation
 
     return (
@@ -182,10 +192,10 @@ def train(
             )
 
         # invariant loss
-        mol_2d_repr = pool(node_2D_repr, batch.batch, pool=args.pooling)
+        mol_2d_repr = pool(node_2D_repr, batch.batch, pool=args.graph_pooling)
         mol_2d_repr = graph_pred_linear(mol_2d_repr)
 
-        mol_3d_repr = pool(node_3D_repr, batch.batch, pool=args.pooling)
+        mol_3d_repr = pool(node_3D_repr, batch.batch, pool=args.graph_pooling)
 
         invariant_loss = balances[0] * NTXentLoss(mol_2d_repr, mol_3d_repr)
         CL_loss_accum += invariant_loss
@@ -194,15 +204,19 @@ def train(
         # equivariant loss
         pos_synth = down_project(node_2D_pos_repr)
 
-        rotated_pos, translated_pos, _, _ = perturb(node_2D_pos_repr)
-        rotated_pos_synth, translated_pos_synth, _, _ = perturb(pos_synth)
+        rotated_pos, translated_pos, _, _ = perturb(node_2D_pos_repr, device=device)
+        rotated_pos_synth, translated_pos_synth, _, _ = perturb(
+            pos_synth, device=device
+        )
 
-        rot_loss = rotated_pos.T @ node_2D_pos_repr - rotated_pos_synth.T @ pos_synth
+        rot_loss = (
+            node_2D_pos_repr @ rotated_pos - pos_synth @ rotated_pos_synth
+        ).mean()
         rot_loss_accum += rot_loss
 
-        trans_loss = (translated_pos - node_2D_pos_repr) - (
+        trans_loss = (translated_pos - node_2D_pos_repr).mean() + (
             translated_pos_synth - pos_synth
-        )
+        ).mean()
         trans_loss_accum += trans_loss
 
         equiv_loss = balances[1] * (rot_loss + trans_loss)
@@ -211,30 +225,36 @@ def train(
         node_2D_repr = torch.cat([node_2D_repr, pos_synth], dim=1)  # N x (F + 3)
 
         ## bond length prediction
-        bond_lengths = batch.bond_lengths  # E x 1, [edge_idx, length]
+        # bond_lengths = batch.bond_lengths  # E x 1, [edge_idx, length]
         i_emb = node_2D_repr[batch.edge_index[0]]
         j_emb = node_2D_repr[batch.edge_index[1]]
 
+        dist_vecs = (
+            batch.positions[batch.edge_index[0]] - batch.positions[batch.edge_index[1]]
+        )
+        bond_lengths = dist_vecs.norm(dim=1).unsqueeze(1)
+
         bond_length_pred = bond_length_predictor(torch.cat([i_emb, j_emb], dim=1))
-        bond_length_loss = nn.MSELoss(bond_length_pred, bond_lengths.unsqueeze(1))
+        bond_length_loss = mse_loss(bond_length_pred, bond_lengths)
         bond_length_loss_accum += bond_length_loss
 
         ## bond angle prediction
         bond_angles = batch.bond_angles  # E' x 3 x 1, [anchor, src, dst, angle]
-        anchor_emb = node_2D_repr[batch.bond_angles[:, 0].long()]
-        src_emb = node_2D_repr[batch.bond_angles[:, 1].long()]
-        dst_emb = node_2D_repr[batch.bond_angles[:, 2].long()]
+        anchor_emb = node_2D_repr[bond_angles[:, 0].long()]
+        src_emb = node_2D_repr[bond_angles[:, 1].long()]
+        dst_emb = node_2D_repr[bond_angles[:, 2].long()]
+        bond_angle_targets = bond_angles[:, 3].unsqueeze(1)
 
         bond_angle_pred = bond_angle_predictor(
             torch.cat([src_emb, anchor_emb, dst_emb], dim=1)
         )
-        bond_angle_loss = nn.MSELoss(bond_angle_pred, bond_angles)
+        bond_angle_loss = mse_loss(bond_angle_pred, bond_angle_targets)
         bond_angle_loss_accum += bond_angle_loss
 
         hybrid_loss = balances[2] * (bond_length_loss + bond_angle_loss)
 
         # matching loss
-        matching_loss = balances[3] * nn.MSELoss(pos_synth, pos_3D_repr)
+        matching_loss = balances[3] * mse_loss(pos_synth, pos_3D_repr)
         matching_loss_accum += matching_loss
 
         loss = invariant_loss + equiv_loss + hybrid_loss + matching_loss
@@ -358,14 +378,14 @@ if __name__ == "__main__":
         ).to(device)
     elif args.model_3d == "EGNN":
         molecule_model_3D = EGNN(
-            in_node_nf=num_node_classes,
-            in_edge_nf=num_edge_classes,
+            in_node_nf=args.emb_dim_egnn,
+            in_edge_nf=args.emb_dim_egnn,
             hidden_nf=args.emb_dim_egnn,
             n_layers=args.n_layers_egnn,
             positions_weight=args.positions_weight_egnn,
             attention=args.attention_egnn,
-            node_attr=True,
-        )
+            node_attr=False,
+        ).to(device)
 
     else:
         raise NotImplementedError("Model {} not included.".format(args.model_3d))
@@ -376,28 +396,28 @@ if __name__ == "__main__":
         intermediate_dim = args.emb_dim
 
     graph_pred_linear = nn.Sequential(
-        nn.Linear(intermediate_dim, intermediate_dim // 2),
-        nn.BatchNorm1d(intermediate_dim // 2),
+        nn.Linear(intermediate_dim, intermediate_dim),
+        nn.BatchNorm1d(intermediate_dim),
         nn.ReLU(),
-        nn.Linear(intermediate_dim // 2, intermediate_dim // 2),
+        nn.Linear(intermediate_dim, intermediate_dim),
     ).to(device)
 
     down_project = nn.Sequential(
-        nn.Linear(intermediate_dim, intermediate_dim // 2),
-        nn.BatchNorm1d(intermediate_dim // 2),
+        nn.Linear(args.emb_dim_pos, args.emb_dim_pos // 2),
+        nn.BatchNorm1d(args.emb_dim_pos // 2),
         nn.ReLU(),
         nn.Linear(
-            intermediate_dim // 2,
-            intermediate_dim // 4,
+            args.emb_dim_pos // 2,
+            args.emb_dim_pos // 2,
         ),
-        nn.BatchNorm1d(intermediate_dim // 2),
+        nn.BatchNorm1d(args.emb_dim_pos // 2),
         nn.ReLU(),
         nn.Linear(
-            intermediate_dim // 4,
-            intermediate_dim // 8,
+            args.emb_dim_pos // 2,
+            args.emb_dim_pos // 4,
         ),
         nn.Linear(
-            intermediate_dim // 8,
+            args.emb_dim_pos // 4,
             3,
         ),
     ).to(device)
@@ -416,9 +436,10 @@ if __name__ == "__main__":
         nn.Linear(intermediate_dim, 1),
     ).to(device)
 
-    model_weight = torch.load(args.input_model_file_3d)
-    if "model_3D" in model_weight:
-        molecule_model_3D.load_state_dict(model_weight["model_3D"])
+    if args.input_model_file_3d != "":
+        model_weight = torch.load(args.input_model_file_3d)
+        molecule_model_3D.load_state_dict(model_weight["model"])
+        print("successfully loaded 3D model")
 
     model_param_group = []
 
