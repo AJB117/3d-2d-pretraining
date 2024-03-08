@@ -28,6 +28,7 @@ class MoleculeDatasetQM9(InMemoryDataset):
         pre_transform=None,
         pre_filter=None,
         calculate_thermo=True,
+        use_pure_atomic_num=True,
     ):
         """
         The complete columns are
@@ -40,6 +41,7 @@ class MoleculeDatasetQM9(InMemoryDataset):
         self.transform = transform
         self.pre_transform = pre_transform
         self.pre_filter = pre_filter
+        self.use_pure_atomic_num = use_pure_atomic_num
 
         self.target_field = [
             "mu",
@@ -246,7 +248,7 @@ class MoleculeDatasetQM9(InMemoryDataset):
                 continue
 
             data, atom_count = mol_to_graph_data_obj_simple_3D(
-                mol, pure_atomic_num=True
+                mol, pure_atomic_num=self.use_pure_atomic_num
             )
 
             data.id = torch.tensor([idx])

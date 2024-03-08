@@ -306,10 +306,14 @@ if __name__ == "__main__":
     except FileNotFoundError:
         if args.dataset == "QM9":
             data_root = "data/molecule_datasets/{}".format(args.dataset)
+            use_pure_atomic_num = True
+            if args.model_3d == "EGNN":
+                use_pure_atomic_num = False
             MoleculeDatasetQM9(
                 data_root,
                 dataset=args.dataset,
                 task=args.task,
+                use_pure_atomic_num=use_pure_atomic_num,
             ).process()
         dataset = Molecule3DDataset(
             data_root,
