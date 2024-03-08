@@ -209,14 +209,14 @@ def train(
             pos_synth, device=device
         )
 
-        rot_loss = (
-            node_2D_pos_repr @ rotated_pos - pos_synth @ rotated_pos_synth
-        ).mean()
+        rot_loss = mse_loss(
+            node_2D_pos_repr @ rotated_pos, pos_synth @ rotated_pos_synth
+        )
         rot_loss_accum += rot_loss
 
-        trans_loss = (translated_pos - node_2D_pos_repr).mean() + (
-            translated_pos_synth - pos_synth
-        ).mean()
+        trans_loss = mse_loss(translated_pos, node_2D_pos_repr) + mse_loss(
+            translated_pos_synth, pos_synth
+        )
         trans_loss_accum += trans_loss
 
         equiv_loss = balances[1] * (rot_loss + trans_loss)
