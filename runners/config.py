@@ -184,6 +184,8 @@ parser.add_argument(
 )
 parser.add_argument("--output_model_name", type=str, default="model")
 parser.add_argument("--process_num", type=int, default=1)
+parser.add_argument("--use_3d", action="store_true", help="use 3d gnn during finetuning with synthetic coordinates")
+parser.add_argument("--use_2d", action="store_true", help="use 2d gnn during finetuning with synthetic coordinates concatenated")
 
 args = parser.parse_args()
 print("arguments\t", args)

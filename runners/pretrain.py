@@ -76,7 +76,7 @@ def save_model(save_best):
         "graph_pred_linear": graph_pred_linear.state_dict(),
         "down_project": down_project.state_dict(),
         "model_2D": molecule_model_2D.state_dict(),
-        "model_2D_pos": molecule_model_2D.state_dict(),
+        "model_2D_pos": molecule_model_2D_pos.state_dict(),
         "model_3D": molecule_model_3D.state_dict(),
     }
     if save_best:

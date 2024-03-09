@@ -1,3 +1,4 @@
+import csv
 import pdb
 import os
 import time
@@ -73,7 +74,7 @@ def split(dataset, data_root):
 
 def model_setup():
     if args.model_3d == "EGNN":
-        model = EGNN(
+        model_3d = EGNN(
             in_node_nf=args.emb_dim_egnn,
             in_edge_nf=args.emb_dim_egnn,
             hidden_nf=args.emb_dim_egnn,
@@ -83,10 +84,9 @@ def model_setup():
             node_attr=False,
         )
         graph_pred_linear = torch.nn.Linear(intermediate_dim, num_tasks)
-        return model, graph_pred_linear
 
     if args.model_3d == "SchNet":
-        model = SchNet(
+        model_3d = SchNet(
             hidden_channels=args.emb_dim,
             num_filters=args.SchNet_num_filters,
             num_interactions=args.SchNet_num_interactions,
@@ -96,7 +96,6 @@ def model_setup():
             node_class=node_class,
         )
         graph_pred_linear = torch.nn.Linear(intermediate_dim, num_tasks)
-        return model, graph_pred_linear
 
     # elif args.model_3d == "PaiNN":
     #     model = PaiNN(
@@ -112,13 +111,22 @@ def model_setup():
 
     # else:
     #     raise Exception("3D model {} not included.".format(args.model_3d))
-    model = GNN(
+    model_2d = GNN(
         args.num_layer,
         args.emb_dim,
         JK=args.JK,
         drop_ratio=args.dropout_ratio,
         gnn_type=args.gnn_type,
     )
+
+    model_2D_pos = GNN(
+        args.num_layer_pos,
+        args.emb_dim_pos,
+        JK=args.JK_pos,
+        drop_ratio=args.dropout_ratio_pos,
+        gnn_type=args.gnn_type_pos,
+    )
+
     graph_pred_linear = GraphPredLinear(
         layer_sizes=[
             (intermediate_dim, int(intermediate_dim // 2)),
@@ -127,20 +135,49 @@ def model_setup():
         num_tasks=num_tasks,
         graph_pooling=args.graph_pooling,
     )
-    return model, graph_pred_linear
+    down_project = nn.Sequential(
+        nn.Linear(args.emb_dim_pos, args.emb_dim_pos // 2),
+        nn.BatchNorm1d(args.emb_dim_pos // 2),
+        nn.ReLU(),
+        nn.Linear(
+            args.emb_dim_pos // 2,
+            args.emb_dim_pos // 2,
+        ),
+        nn.BatchNorm1d(args.emb_dim_pos // 2),
+        nn.ReLU(),
+        nn.Linear(
+            args.emb_dim_pos // 2,
+            args.emb_dim_pos // 4,
+        ),
+        nn.Linear(
+            args.emb_dim_pos // 4,
+            3,
+        ),
+    )
+    return model_3d, model_2d, graph_pred_linear, down_project, model_2D_pos
 
 
-def load_model(model, graph_pred_linear, model_weight_file):
+def load_model(model_3d, model_2d, graph_pred_linear, model_weight_file, down_project=None, model_pos=None):
     print("Loading from {}".format(model_weight_file))
     model_weight = torch.load(model_weight_file)
+    if args.mode == "method":  # as opposed to baseline
+        model_2d.load_state_dict(model_weight["model_2D"])
+        model_pos.load_state_dict(model_weight["model_2D_pos"])
+        down_project.load_state_dict(model_weight["down_project"])
+
+        if (graph_pred_linear is not None) and ("graph_pred_linear" in model_weight):
+            graph_pred_linear.load_state_dict(model_weight["graph_pred_linear"])
+
+        return
+
 
     if "model_3D" in model_weight:
-        model.load_state_dict(model_weight["model_3D"])
+        model_3d.load_state_dict(model_weight["model_3D"])
         if (graph_pred_linear is not None) and ("graph_pred_linear" in model_weight):
             graph_pred_linear.load_state_dict(model_weight["graph_pred_linear"])
 
     else:
-        model.load_state_dict(model_weight["model"])
+        model_2d.load_state_dict(model_weight["model"])
         if (graph_pred_linear is not None) and ("graph_pred_linear" in model_weight):
             graph_pred_linear.load_state_dict(model_weight["graph_pred_linear"])
     return
@@ -152,6 +189,12 @@ def save_model(save_best):
             print("save model with optimal loss")
             output_model_path = os.path.join(args.output_model_dir, "model.pth")
             saved_model_dict = {}
+
+            if args.use_3d:
+                model = model_3d
+            elif args.use_2d:
+                model = model_2d
+
             saved_model_dict["model"] = model.state_dict()
             if graph_pred_linear is not None:
                 saved_model_dict["graph_pred_linear"] = graph_pred_linear.state_dict()
@@ -161,6 +204,12 @@ def save_model(save_best):
             print("save model in the last epoch")
             output_model_path = os.path.join(args.output_model_dir, "model_final.pth")
             saved_model_dict = {}
+
+            if args.use_3d:
+                model = model_3d
+            elif args.use_2d:
+                model = model_2d
+
             saved_model_dict["model"] = model.state_dict()
             if graph_pred_linear is not None:
                 saved_model_dict["graph_pred_linear"] = graph_pred_linear.state_dict()
@@ -169,7 +218,11 @@ def save_model(save_best):
 
 
 def train(epoch, device, loader, optimizer):
-    model.train()
+    if args.use_3d:
+        model_3d.train()
+    elif args.use_2d:
+        model_2d.train()
+
     if graph_pred_linear is not None:
         graph_pred_linear.train()
 
@@ -183,14 +236,30 @@ def train(epoch, device, loader, optimizer):
     for step, batch in enumerate(L):
         batch = batch.to(device)
 
-        if args.model_3d == "EGNN":
-            node_repr, pos_3D_repr = model(
-                batch.x, batch.positions, batch.edge_index, batch.edge_attr
-            )
-            molecule_repr = global_mean_pool(node_repr, batch.batch)
-        elif args.model_2d == "GIN":
-            node_repr = model(batch.x, batch.edge_index, batch.edge_attr)
-            molecule_repr = global_mean_pool(node_repr, batch.batch)
+        if args.mode == "method":
+            node_2D_pos_repr = model_pos(
+                batch.x, batch.edge_index, batch.edge_attr
+            ) 
+            pos_synth = down_project(node_2D_pos_repr) # synthetic coords
+
+            if args.use_3d:
+                node_3D_repr, _ = model_3d(
+                    batch.x, pos_synth, batch.edge_index, batch.edge_attr
+                )
+                molecule_repr = global_mean_pool(node_3D_repr, batch.batch)
+            if args.use_2d:
+                node_2D_repr = model_2d(batch.x, batch.edge_index, batch.edge_attr)
+                # todo
+
+        else:
+            if args.model_3d == "EGNN":
+                node_repr, _ = model_3d(
+                    batch.x, batch.positions, batch.edge_index, batch.edge_attr
+                )
+                molecule_repr = global_mean_pool(node_repr, batch.batch)
+            elif args.model_2d == "GIN":
+                node_repr = model_2d(batch.x, batch.edge_index, batch.edge_attr)
+                molecule_repr = global_mean_pool(node_repr, batch.batch)
 
         if graph_pred_linear is not None:
             pred = graph_pred_linear(molecule_repr).squeeze()
@@ -224,7 +293,11 @@ def train(epoch, device, loader, optimizer):
 
 @torch.no_grad()
 def eval(device, loader):
-    model.eval()
+    if args.use_3d:
+        model_3d.eval()
+    elif args.use_2d:
+        model_2d.eval()
+
     if graph_pred_linear is not None:
         graph_pred_linear.eval()
     y_true = []
@@ -237,14 +310,30 @@ def eval(device, loader):
     for batch in L:
         batch = batch.to(device)
 
-        if args.model_3d == "EGNN":
-            node_repr, pos_3D_repr = model(
-                batch.x, batch.positions, batch.edge_index, batch.edge_attr
-            )
-            molecule_repr = global_mean_pool(node_repr, batch.batch)
-        elif args.model_2d == "GIN":
-            node_repr = model(batch.x, batch.edge_index, batch.edge_attr)
-            molecule_repr = global_mean_pool(node_repr, batch.batch)
+        if args.mode == "method":
+            node_2D_pos_repr = model_pos(
+                batch.x, batch.edge_index, batch.edge_attr
+            ) 
+            pos_synth = down_project(node_2D_pos_repr) # synthetic coords
+
+            if args.use_3d:
+                node_3D_repr, _ = model_3d(
+                    batch.x, pos_synth, batch.edge_index, batch.edge_attr
+                )
+                molecule_repr = global_mean_pool(node_3D_repr, batch.batch)
+            if args.use_2d:
+                node_2D_repr = model_2d(batch.x, batch.edge_index, batch.edge_attr)
+                # todo
+
+        else:
+            if args.model_3d == "EGNN":
+                node_repr, _ = model_3d(
+                    batch.x, batch.positions, batch.edge_index, batch.edge_attr
+                )
+                molecule_repr = global_mean_pool(node_repr, batch.batch)
+            elif args.model_2d == "GIN":
+                node_repr = model_2d(batch.x, batch.edge_index, batch.edge_attr)
+                molecule_repr = global_mean_pool(node_repr, batch.batch)
 
         if graph_pred_linear is not None:
             pred = graph_pred_linear(molecule_repr).squeeze()
@@ -349,23 +438,41 @@ if __name__ == "__main__":
         intermediate_dim = args.emb_dim
 
     node_class, edge_class = 119, 5
-    model, graph_pred_linear = model_setup()
+    model_3d, model_2d, graph_pred_linear, down_project, model_pos = model_setup()
 
     if args.input_model_file != "":
         print(f"loading model from {args.input_model_file}...")
-        load_model(model, graph_pred_linear, args.input_model_file)
+        load_model(
+            model_3d,
+            model_2d,
+            graph_pred_linear,
+            args.input_model_file,
+            down_project=down_project,
+            model_pos=model_pos,
+        )
     else:
         print("fine-tuning from scratch...")
 
-    model.to(device)
-    print(model)
+    if args.use_3d:
+        model_3d.to(device)
+    elif args.use_2d:
+        model_2d.to(device)
+    else:
+        raise ValueError("Please specify either 2D or 3D model to use.")
+
     if graph_pred_linear is not None:
         graph_pred_linear.to(device)
-    print(graph_pred_linear)
 
     # set up optimizer
     # different learning rate for different part of GNN
-    model_param_group = [{"params": model.parameters(), "lr": args.lr}]
+
+    if args.use_3d:
+        model_param_group = [{"params": model_3d.parameters(), "lr": args.lr}]
+    elif args.use_2d:
+        model_param_group = [{"params": model_2d.parameters(), "lr": args.lr}]
+    else:
+        raise ValueError("Please specify either 2D or 3D model to use.")
+
     if graph_pred_linear is not None:
         model_param_group.append(
             {"params": graph_pred_linear.parameters(), "lr": args.lr}
@@ -448,5 +555,28 @@ if __name__ == "__main__":
             test_mae_list[best_val_idx],
         )
     )
+
+    with open("config.csv", "r") as f:
+        reader = csv.reader(f)
+        num_rows = len(list(reader))
+
+    with open("config.csv", "a") as f:
+        writer = csv.writer(f)
+        loss_dict = {
+            "finetune_train_mae": train_mae_list[best_val_idx],
+            "finetune_val_mae": val_mae_list[best_val_idx],
+            "finetune_test_mae": test_mae_list[best_val_idx],
+        }
+
+        dict_args = vars(args)
+        dict_args.update(loss_dict)
+
+        # just increment if no name is given
+        args.output_model_name = f"{args.output_model_name}_{num_rows+1}"
+        dict_args["finetune_save_location"] = os.path.join(
+            args.output_model_dir, f"{args.output_model_name}.pth"
+        )
+
+        writer.writerow(dict_args.values())
 
     save_model(save_best=False)
