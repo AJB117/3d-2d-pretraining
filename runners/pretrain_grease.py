@@ -17,7 +17,8 @@ from Geom3D.datasets import Molecule3DDataset, MoleculeDatasetQM9
 from Geom3D.models import GNN, SchNet, EGNN
 from config import args
 from ogb.utils.features import get_atom_feature_dims
-from util import NTXentLoss, perturb, CL_acc
+from util import NTXentLoss, perturb
+from torch_geometric.transforms import VirtualNode
 
 
 ogb_feat_dim = get_atom_feature_dims()
@@ -43,7 +44,6 @@ def save_model(
     molecule_model_2D_pos,
     molecule_model_3D,
     model_name,
-    optimal_loss,
 ):
     if args.output_model_dir == "":
         return
@@ -56,6 +56,7 @@ def save_model(
         "model_3D": molecule_model_3D.state_dict(),
     }
     if save_best:
+        global optimal_loss
         print("save model with loss: {:.5f}\n".format(optimal_loss))
         output_model_path = os.path.join(
             args.output_model_dir, f"{model_name}_complete.pth"
@@ -79,11 +80,38 @@ def pool(x, batch, pool="mean"):
         raise NotImplementedError("Pool type not included.")
 
 
+def CL_acc(x1, x2, pos_mask=None):
+    batch_size, _ = x1.size()
+    if (
+        x1.shape != x2.shape and pos_mask is None
+    ):  # if we have noisy samples our x2 has them appended at the end so we just take the non noised ones to calculate the similaritiy
+        x2 = x2[:batch_size]
+    sim_matrix = torch.einsum("ik,jk->ij", x1, x2)
+
+    x1_abs = x1.norm(dim=1)
+    x2_abs = x2.norm(dim=1)
+    sim_matrix = sim_matrix / torch.einsum("i,j->ij", x1_abs, x2_abs)
+
+    preds = (sim_matrix + 1) / 2 > 0.5
+    if pos_mask is None:  # if we are comparing global with global
+        pos_mask = torch.eye(batch_size, device=x1.device)
+    neg_mask = 1 - pos_mask
+
+    num_positives = len(x1)
+    num_negatives = len(x1) * (len(x2) - 1)
+    true_positives = (
+        num_positives - ((preds.long() - pos_mask) * pos_mask).count_nonzero()
+    )
+    true_negatives = (
+        num_negatives - (((~preds).long() - neg_mask) * neg_mask).count_nonzero()
+    )
+    return (true_positives / num_positives + true_negatives / num_negatives) / 2
+
+
 def train(
     args,
     model_name,
     molecule_model_2D,
-    molecule_model_2D_pos,
     molecule_model_3D,
     device,
     loader,
@@ -95,21 +123,15 @@ def train(
         1,
     ],  # hyperparams corresponding to invariant loss, equivariant loss, hybrid loss, matching loss
     graph_pred_linear=None,
-    down_project=None,
-    bond_length_predictor=None,
-    bond_angle_predictor=None,
     lr_scheduler=None,
     epoch=0,
-    optimal_loss=1e10,
 ):
     start_time = time.time()
 
     molecule_model_2D.train()
-    molecule_model_2D_pos.train()
     molecule_model_3D.eval()
 
     CL_loss_accum, CL_acc_accum = 0, 0
-    CL_tp_rate_accum, CL_fp_rate_accum = 0, 0
     rot_loss_accum = 0
     trans_loss_accum = 0
     bond_length_loss_accum = 0
@@ -128,9 +150,6 @@ def train(
         batch = batch.to(device)
 
         node_2D_repr = molecule_model_2D(batch.x, batch.edge_index, batch.edge_attr)
-        node_2D_pos_repr = molecule_model_2D_pos(
-            batch.x, batch.edge_index, batch.edge_attr
-        )  # for synthetic coords
 
         if args.model_3d == "EGNN":
             node_3D_repr, pos_3D_repr = molecule_model_3D(
@@ -145,9 +164,7 @@ def train(
 
         invariant_loss = balances[0] * NTXentLoss(mol_2d_repr, mol_3d_repr)
         CL_loss_accum += invariant_loss
-        CL_acc_accum += CL_acc(mol_2d_repr, mol_3d_repr)[0]
-        CL_tp_rate_accum += CL_acc(mol_2d_repr, mol_3d_repr)[1]
-        CL_fp_rate_accum += CL_acc(mol_2d_repr, mol_3d_repr)[2]
+        CL_acc_accum += CL_acc(mol_2d_repr, mol_3d_repr)
 
         # equivariant loss
         pos_synth = down_project(node_2D_pos_repr)
@@ -221,10 +238,10 @@ def train(
     elif args.lr_scheduler in ["ReduceLROnPlateau"]:
         lr_scheduler.step(loss_accum)
 
+    global optimal_loss
     CL_loss_accum /= len(loader)
     CL_acc_accum /= len(loader)
-    CL_tp_rate_accum /= len(loader)
-    CL_fp_rate_accum /= len(loader)
+
     rot_loss_accum /= len(loader)
     trans_loss_accum /= len(loader)
     bond_length_loss_accum /= len(loader)
@@ -233,11 +250,6 @@ def train(
     loss_accum /= len(loader)
 
     print("CL Loss: {:.5f}\tCL Acc: {:.5f}".format(CL_loss_accum, CL_acc_accum))
-    print(
-        "CL TP Rate: {:.5f}\tCL FP Rate: {:.5f}".format(
-            CL_tp_rate_accum, CL_fp_rate_accum
-        )
-    )
     print(
         "Rot Loss: {:.5f}\tTrans Loss: {:.5f}".format(rot_loss_accum, trans_loss_accum)
     )
@@ -263,7 +275,6 @@ def train(
             molecule_model_2D_pos=molecule_model_2D_pos,
             molecule_model_3D=molecule_model_3D,
             model_name=model_name,
-            optimal_loss=optimal_loss,
         )
 
     loss_dict = {
@@ -278,7 +289,7 @@ def train(
         "pretrain_optimal_loss": optimal_loss.item(),
     }
 
-    return loss_dict, optimal_loss
+    return loss_dict
 
 
 def main():
@@ -296,7 +307,7 @@ def main():
     num_node_classes = 119
     num_edge_classes = 3
 
-    transform = None
+    transform = VirtualNode
     data_root = "{}/{}".format(args.input_data_dir, args.dataset)
     try:
         dataset = Molecule3DDataset(
@@ -339,14 +350,6 @@ def main():
         JK=args.JK,
         drop_ratio=args.dropout_ratio,
         gnn_type=args.gnn_type,
-    ).to(device)
-
-    molecule_model_2D_pos = GNN(
-        args.num_layer_pos,
-        args.emb_dim_pos,
-        JK=args.JK_pos,
-        drop_ratio=args.dropout_ratio_pos,
-        gnn_type=args.gnn_type_pos,
     ).to(device)
 
     print("Using 3d model\t", args.model_3d)
@@ -406,20 +409,6 @@ def main():
         ),
     ).to(device)
 
-    bond_length_predictor = nn.Sequential(
-        nn.Linear((intermediate_dim + 3) * 2, intermediate_dim),
-        nn.BatchNorm1d(intermediate_dim),
-        nn.ReLU(),
-        nn.Linear(intermediate_dim, 1),
-    ).to(device)
-
-    bond_angle_predictor = nn.Sequential(
-        nn.Linear((intermediate_dim + 3) * 3, intermediate_dim),
-        nn.BatchNorm1d(intermediate_dim),
-        nn.ReLU(),
-        nn.Linear(intermediate_dim, 1),
-    ).to(device)
-
     if args.input_model_file_3d != "":
         model_weight = torch.load(args.input_model_file_3d)
         molecule_model_3D.load_state_dict(model_weight["model"])
@@ -429,23 +418,10 @@ def main():
 
     # MLP heads
     model_param_group.append({"params": graph_pred_linear.parameters(), "lr": args.lr})
-    model_param_group.append({"params": down_project.parameters(), "lr": args.lr})
-    model_param_group.append(
-        {"params": bond_length_predictor.parameters(), "lr": args.lr}
-    )
-    model_param_group.append(
-        {"params": bond_angle_predictor.parameters(), "lr": args.lr}
-    )
 
     # GNNs
     model_param_group.append(
         {"params": molecule_model_2D.parameters(), "lr": args.lr * args.gnn_2d_lr_scale}
-    )
-    model_param_group.append(
-        {
-            "params": molecule_model_2D_pos.parameters(),
-            "lr": args.lr * args.gnn_2d_pos_lr_scale,
-        }
     )
     model_param_group.append(
         {"params": molecule_model_3D.parameters(), "lr": args.lr * args.gnn_3d_lr_scale}
@@ -489,22 +465,18 @@ def main():
 
     for epoch in range(1, args.epochs + 1):
         print("epoch: {}".format(epoch))
-        loss_dict, optimal_loss = train(
+        loss_dict = train(
             args,
             model_name,
             molecule_model_2D,
-            molecule_model_2D_pos,
             molecule_model_3D,
             device,
             loader,
             optimizer,
             graph_pred_linear=graph_pred_linear,
             down_project=down_project,
-            bond_length_predictor=bond_length_predictor,
-            bond_angle_predictor=bond_angle_predictor,
             lr_scheduler=lr_scheduler,
             epoch=epoch,
-            optimal_loss=optimal_loss,
         )
 
     # to aggregate later with a separate script
@@ -549,7 +521,6 @@ def main():
         molecule_model_2D_pos=molecule_model_2D_pos,
         molecule_model_3D=molecule_model_3D,
         model_name=model_name,
-        optimal_loss=optimal_loss,
     )
 
     return config_id

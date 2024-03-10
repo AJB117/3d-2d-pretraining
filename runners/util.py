@@ -10,6 +10,91 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+def CL_acc(x1, x2, pos_mask=None):
+    batch_size, _ = x1.size()
+    if (
+        x1.shape != x2.shape and pos_mask is None
+    ):  # if we have noisy samples our x2 has them appended at the end so we just take the non noised ones to calculate the similaritiy
+        x2 = x2[:batch_size]
+    sim_matrix = torch.einsum("ik,jk->ij", x1, x2)
+
+    x1_abs = x1.norm(dim=1)
+    x2_abs = x2.norm(dim=1)
+    sim_matrix = sim_matrix / torch.einsum("i,j->ij", x1_abs, x2_abs)
+
+    preds = (sim_matrix + 1) / 2 > 0.5
+    if pos_mask is None:  # if we are comparing global with global
+        pos_mask = torch.eye(batch_size, device=x1.device)
+    neg_mask = 1 - pos_mask
+
+    num_positives = len(x1)
+    num_negatives = len(x1) * (len(x2) - 1)
+    true_positives = (
+        num_positives - ((preds.long() - pos_mask) * pos_mask).count_nonzero()
+    )
+    true_negatives = (
+        num_negatives - (((~preds).long() - neg_mask) * neg_mask).count_nonzero()
+    )
+    true_positive_rate = true_positives / num_positives
+    true_negative_rate = true_negatives / num_negatives
+    return (
+        (true_positives / num_positives + true_negatives / num_negatives) / 2,
+        true_positive_rate,
+        true_negative_rate,
+    )
+
+
+def perturb(
+    pos,
+    rotation=None,
+    translation=None,
+    rot_mu=0,
+    rot_sigma=0.1,
+    trans_mu=0,
+    trans_sigma=1,
+    device="cuda",
+):
+    if rotation is None:
+        random_matrix = torch.normal(
+            rot_mu, rot_sigma, size=(pos.shape[1], pos.shape[1])
+        )
+        rotation, _ = torch.qr(random_matrix)
+
+    if translation is None:
+        translation = torch.normal(trans_mu, trans_sigma, size=(1, pos.shape[1]))
+
+    rotation = rotation.to(device)
+    translation = translation.to(device)
+
+    rotated_pos = rotation @ pos.T
+    translated_pos = pos + translation
+
+    return (
+        rotated_pos,
+        translated_pos,
+        rotation,
+        translation,
+    )  # return rotation and translation for debugging
+
+
+# credit to 3D Infomax (https://github.com/HannesStark/3DInfomax) for the following code
+def NTXentLoss(z1: torch.Tensor, z2: torch.Tensor, tau=0.1, norm=True):
+    sim_matrix = torch.einsum("ik, jk->ij", z1, z2)
+
+    if norm:
+        z1 = z1.norm(dim=1)
+        z2 = z2.norm(dim=1)
+        sim_matrix = sim_matrix / (torch.einsum("i, j->ij", z1, z2) + 1e-8)
+
+    sim_matrix = torch.exp(sim_matrix / tau)
+    pos_sim = sim_matrix.diag()
+
+    loss = pos_sim / (sim_matrix.sum(dim=1) - pos_sim)
+    loss = -torch.log(loss).mean()
+
+    return loss
+
+
 cosine_sim = nn.CosineSimilarity(dim=1, eps=1e-6)
 
 

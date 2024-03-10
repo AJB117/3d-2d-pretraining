@@ -85,7 +85,7 @@ def model_setup():
         )
         graph_pred_linear = torch.nn.Linear(intermediate_dim, num_tasks)
 
-    if args.model_3d == "SchNet":
+    elif args.model_3d == "SchNet":
         model_3d = SchNet(
             hidden_channels=args.emb_dim,
             num_filters=args.SchNet_num_filters,
@@ -97,27 +97,14 @@ def model_setup():
         )
         graph_pred_linear = torch.nn.Linear(intermediate_dim, num_tasks)
 
-    # elif args.model_3d == "PaiNN":
-    #     model = PaiNN(
-    #         n_atom_basis=args.emb_dim,  # default is 64
-    #         n_interactions=args.PaiNN_n_interactions,
-    #         n_rbf=args.PaiNN_n_rbf,
-    #         cutoff=args.PaiNN_radius_cutoff,
-    #         max_z=node_class,
-    #         n_out=num_tasks,
-    #         readout=args.PaiNN_readout,
-    #     )
-    #     graph_pred_linear = model.create_output_layers()
-
-    # else:
-    #     raise Exception("3D model {} not included.".format(args.model_3d))
-    model_2d = GNN(
-        args.num_layer,
-        args.emb_dim,
-        JK=args.JK,
-        drop_ratio=args.dropout_ratio,
-        gnn_type=args.gnn_type,
-    )
+    if args.model_2d == "GIN":
+        model_2d = GNN(
+            args.num_layer,
+            args.emb_dim,
+            JK=args.JK,
+            drop_ratio=args.dropout_ratio,
+            gnn_type=args.gnn_type,
+        ).to(device)
 
     model_2D_pos = GNN(
         args.num_layer_pos,
@@ -125,16 +112,18 @@ def model_setup():
         JK=args.JK_pos,
         drop_ratio=args.dropout_ratio_pos,
         gnn_type=args.gnn_type_pos,
-    )
+    ).to(device)
 
-    graph_pred_linear = GraphPredLinear(
-        layer_sizes=[
-            (intermediate_dim, int(intermediate_dim // 2)),
-            (int(intermediate_dim // 2), (int(intermediate_dim // 4))),
-        ],
-        num_tasks=num_tasks,
-        graph_pooling=args.graph_pooling,
-    )
+    if args.mode == "method":
+        graph_pred_linear = nn.Sequential(
+            nn.Linear(intermediate_dim, intermediate_dim),
+            nn.BatchNorm1d(intermediate_dim),
+            nn.ReLU(),
+            nn.Linear(intermediate_dim, intermediate_dim),
+        ).to(device)
+
+    final_linear = nn.Linear(intermediate_dim, num_tasks).to(device)
+
     down_project = nn.Sequential(
         nn.Linear(args.emb_dim_pos, args.emb_dim_pos // 2),
         nn.BatchNorm1d(args.emb_dim_pos // 2),
@@ -153,11 +142,26 @@ def model_setup():
             args.emb_dim_pos // 4,
             3,
         ),
+    ).to(device)
+
+    return (
+        model_3d,
+        model_2d,
+        graph_pred_linear,
+        down_project,
+        model_2D_pos,
+        final_linear,
     )
-    return model_3d, model_2d, graph_pred_linear, down_project, model_2D_pos
 
 
-def load_model(model_3d, model_2d, graph_pred_linear, model_weight_file, down_project=None, model_pos=None):
+def load_model(
+    model_3d,
+    model_2d,
+    graph_pred_linear,
+    model_weight_file,
+    down_project=None,
+    model_pos=None,
+):
     print("Loading from {}".format(model_weight_file))
     model_weight = torch.load(model_weight_file)
     if args.mode == "method":  # as opposed to baseline
@@ -169,7 +173,6 @@ def load_model(model_3d, model_2d, graph_pred_linear, model_weight_file, down_pr
             graph_pred_linear.load_state_dict(model_weight["graph_pred_linear"])
 
         return
-
 
     if "model_3D" in model_weight:
         model_3d.load_state_dict(model_weight["model_3D"])
@@ -184,36 +187,37 @@ def load_model(model_3d, model_2d, graph_pred_linear, model_weight_file, down_pr
 
 
 def save_model(save_best):
-    if not args.output_model_dir == "":
-        if save_best:
-            print("save model with optimal loss")
-            output_model_path = os.path.join(args.output_model_dir, "model.pth")
-            saved_model_dict = {}
+    if args.output_model_dir == "":
+        return
 
-            if args.use_3d:
-                model = model_3d
-            elif args.use_2d:
-                model = model_2d
+    if args.use_3d:
+        model = model_3d
+    elif args.use_2d:
+        model = model_2d
 
-            saved_model_dict["model"] = model.state_dict()
-            if graph_pred_linear is not None:
-                saved_model_dict["graph_pred_linear"] = graph_pred_linear.state_dict()
-            torch.save(saved_model_dict, output_model_path)
+    if save_best:
+        print(f"save model {model_name} with optimal loss")
+        output_model_path = os.path.join(args.output_model_dir, f"{model_name}.pth")
+    else:
+        print(f"save model {model_name} in the last epoch")
+        output_model_path = os.path.join(
+            args.output_model_dir, f"{model_name}_final.pth"
+        )
 
-        else:
-            print("save model in the last epoch")
-            output_model_path = os.path.join(args.output_model_dir, "model_final.pth")
-            saved_model_dict = {}
+    saved_model_dict = {}
 
-            if args.use_3d:
-                model = model_3d
-            elif args.use_2d:
-                model = model_2d
+    saved_model_dict["model"] = model.state_dict()
 
-            saved_model_dict["model"] = model.state_dict()
-            if graph_pred_linear is not None:
-                saved_model_dict["graph_pred_linear"] = graph_pred_linear.state_dict()
-            torch.save(saved_model_dict, output_model_path)
+    if args.mode == "method":
+        saved_model_dict["model_2D_pos"] = model_pos.state_dict()
+        saved_model_dict["down_project"] = down_project.state_dict()
+        saved_model_dict["final_linear"] = final_linear.state_dict()
+
+    if graph_pred_linear is not None:
+        saved_model_dict["graph_pred_linear"] = graph_pred_linear.state_dict()
+
+    torch.save(saved_model_dict, output_model_path)
+
     return
 
 
@@ -226,6 +230,9 @@ def train(epoch, device, loader, optimizer):
     if graph_pred_linear is not None:
         graph_pred_linear.train()
 
+    if model_pos is not None:
+        model_pos.eval()
+
     loss_acc = 0
     num_iters = len(loader)
 
@@ -237,10 +244,8 @@ def train(epoch, device, loader, optimizer):
         batch = batch.to(device)
 
         if args.mode == "method":
-            node_2D_pos_repr = model_pos(
-                batch.x, batch.edge_index, batch.edge_attr
-            ) 
-            pos_synth = down_project(node_2D_pos_repr) # synthetic coords
+            node_2D_pos_repr = model_pos(batch.x, batch.edge_index, batch.edge_attr)
+            pos_synth = down_project(node_2D_pos_repr)  # synthetic coords
 
             if args.use_3d:
                 node_3D_repr, _ = model_3d(
@@ -252,19 +257,22 @@ def train(epoch, device, loader, optimizer):
                 # todo
 
         else:
-            if args.model_3d == "EGNN":
+            if args.use_3d and args.model_3d == "EGNN":
                 node_repr, _ = model_3d(
                     batch.x, batch.positions, batch.edge_index, batch.edge_attr
                 )
                 molecule_repr = global_mean_pool(node_repr, batch.batch)
-            elif args.model_2d == "GIN":
+            elif args.use_2d and args.model_2d == "GIN":
                 node_repr = model_2d(batch.x, batch.edge_index, batch.edge_attr)
                 molecule_repr = global_mean_pool(node_repr, batch.batch)
 
-        if graph_pred_linear is not None:
-            pred = graph_pred_linear(molecule_repr).squeeze()
+        if args.mode == "method":
+            pred = final_linear(molecule_repr).squeeze()
         else:
-            pred = molecule_repr.squeeze()
+            if graph_pred_linear is not None:
+                pred = graph_pred_linear(molecule_repr).squeeze()
+            else:
+                pred = molecule_repr.squeeze()
 
         B = pred.size()[0]
         y = batch.y.view(B, -1)[:, task_id]
@@ -300,6 +308,10 @@ def eval(device, loader):
 
     if graph_pred_linear is not None:
         graph_pred_linear.eval()
+
+    if model_pos is not None:
+        model_pos.eval()
+
     y_true = []
     y_scores = []
 
@@ -311,10 +323,8 @@ def eval(device, loader):
         batch = batch.to(device)
 
         if args.mode == "method":
-            node_2D_pos_repr = model_pos(
-                batch.x, batch.edge_index, batch.edge_attr
-            ) 
-            pos_synth = down_project(node_2D_pos_repr) # synthetic coords
+            node_2D_pos_repr = model_pos(batch.x, batch.edge_index, batch.edge_attr)
+            pos_synth = down_project(node_2D_pos_repr)  # synthetic coords
 
             if args.use_3d:
                 node_3D_repr, _ = model_3d(
@@ -326,24 +336,26 @@ def eval(device, loader):
                 # todo
 
         else:
-            if args.model_3d == "EGNN":
+            if args.use_3d and args.model_3d == "EGNN":
                 node_repr, _ = model_3d(
                     batch.x, batch.positions, batch.edge_index, batch.edge_attr
                 )
                 molecule_repr = global_mean_pool(node_repr, batch.batch)
-            elif args.model_2d == "GIN":
+            elif args.use_2d and args.model_2d == "GIN":
                 node_repr = model_2d(batch.x, batch.edge_index, batch.edge_attr)
                 molecule_repr = global_mean_pool(node_repr, batch.batch)
 
-        if graph_pred_linear is not None:
-            pred = graph_pred_linear(molecule_repr).squeeze()
+        if args.mode == "method":
+            pred = final_linear(molecule_repr).squeeze()
         else:
-            pred = molecule_repr.squeeze()
+            if graph_pred_linear is not None:
+                pred = graph_pred_linear(molecule_repr).squeeze()
+            else:
+                pred = molecule_repr.squeeze()
 
         B = pred.size()[0]
         y = batch.y.view(B, -1)[:, task_id]
         # denormalize
-        # pred = pred * TRAIN_std + TRAIN_mean
         pred = (pred * TRAIN_std + TRAIN_mean) * loader.dataset.eV2meV[task_id]
         y = y * loader.dataset.eV2meV[task_id]
 
@@ -438,10 +450,11 @@ if __name__ == "__main__":
         intermediate_dim = args.emb_dim
 
     node_class, edge_class = 119, 5
-    model_3d, model_2d, graph_pred_linear, down_project, model_pos = model_setup()
+    model_3d, model_2d, graph_pred_linear, down_project, model_pos, final_linear = (
+        model_setup()
+    )
 
     if args.input_model_file != "":
-        print(f"loading model from {args.input_model_file}...")
         load_model(
             model_3d,
             model_2d,
@@ -463,9 +476,6 @@ if __name__ == "__main__":
     if graph_pred_linear is not None:
         graph_pred_linear.to(device)
 
-    # set up optimizer
-    # different learning rate for different part of GNN
-
     if args.use_3d:
         model_param_group = [{"params": model_3d.parameters(), "lr": args.lr}]
     elif args.use_2d:
@@ -473,12 +483,17 @@ if __name__ == "__main__":
     else:
         raise ValueError("Please specify either 2D or 3D model to use.")
 
+    if args.mode == "method":
+        model_param_group.append({"params": final_linear.parameters(), "lr": args.lr})
+
     if graph_pred_linear is not None:
         model_param_group.append(
             {"params": graph_pred_linear.parameters(), "lr": args.lr}
         )
     optimizer = optim.Adam(model_param_group, lr=args.lr, weight_decay=args.decay)
 
+    # set up optimizer
+    # different learning rate for different part of GNN
     lr_scheduler = None
     if args.lr_scheduler == "CosineAnnealingLR":
         lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -505,6 +520,12 @@ if __name__ == "__main__":
         print("Apply lr scheduler ReduceLROnPlateau")
     else:
         print("lr scheduler {} is not included.".format(args.lr_scheduler))
+
+    model_name = args.output_model_name
+    # just use date if we stick with the default
+    if model_name == "":
+        now_in_ms = int(time.time() * 1000)
+        model_name = f"{now_in_ms}"
 
     train_mae_list, val_mae_list, test_mae_list = [], [], []
     best_val_mae, best_val_idx = 1e10, 0
@@ -537,7 +558,7 @@ if __name__ == "__main__":
                     save_model(save_best=True)
 
                     filename = os.path.join(
-                        args.output_model_dir, "evaluation_best.pth"
+                        args.output_model_dir, f"{model_name}_evaluation_best.pth"
                     )
                     np.savez(
                         filename,
@@ -549,18 +570,15 @@ if __name__ == "__main__":
         print("Took\t{}\n".format(time.time() - start_time))
 
     print(
-        "best train: {:.6f}\tval: {:.6f}\ttest: {:.6f}".format(
+        "{} best train: {:.6f}\tval: {:.6f}\ttest: {:.6f}".format(
+            model_name,
             train_mae_list[best_val_idx],
             val_mae_list[best_val_idx],
             test_mae_list[best_val_idx],
         )
     )
 
-    with open("config.csv", "r") as f:
-        reader = csv.reader(f)
-        num_rows = len(list(reader))
-
-    with open("config.csv", "a") as f:
+    with open("configs.csv", "a") as f:
         writer = csv.writer(f)
         loss_dict = {
             "finetune_train_mae": train_mae_list[best_val_idx],
@@ -572,9 +590,9 @@ if __name__ == "__main__":
         dict_args.update(loss_dict)
 
         # just increment if no name is given
-        args.output_model_name = f"{args.output_model_name}_{num_rows+1}"
+
         dict_args["finetune_save_location"] = os.path.join(
-            args.output_model_dir, f"{args.output_model_name}.pth"
+            args.output_model_dir, f"{model_name}.pth"
         )
 
         writer.writerow(dict_args.values())
