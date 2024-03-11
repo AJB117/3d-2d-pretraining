@@ -83,6 +83,10 @@ class SchNet(torch.nn.Module):
             self.atomref.weight.data.copy_(self.initial_atomref)
 
     def forward(self, z, pos, batch=None, return_latent=False):
+        if z.dim() != 1:
+            z = z[
+                :, 0
+            ]  # avoid rebuilding the dataset when use_pure_atomic_num is False
         assert z.dim() == 1 and z.dtype == torch.long
         batch = torch.zeros_like(z) if batch is None else batch
 
