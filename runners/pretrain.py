@@ -45,6 +45,7 @@ def save_model(
     enforcer_mlp,
     model_name,
     optimal_loss,
+    process_num,
 ):
     if args.output_model_dir == "":
         return
@@ -60,11 +61,11 @@ def save_model(
     if save_best:
         print("save model with loss: {:.5f}\n".format(optimal_loss))
         output_model_path = os.path.join(
-            args.output_model_dir, f"{model_name}_complete.pth"
+            args.output_model_dir, f"{model_name}_{process_num}_complete.pth"
         )
     else:
         output_model_path = os.path.join(
-            args.output_model_dir, f"{model_name}_complete_final.pth"
+            args.output_model_dir, f"{model_name}_{process_num}_complete_final.pth"
         )
 
     torch.save(saver_dict, output_model_path)
@@ -281,6 +282,7 @@ def train(
             enforcer_mlp=enforcer_mlp,
             model_name=model_name,
             optimal_loss=optimal_loss,
+            process_num=args.process_num,
         )
 
     loss_dict = {
@@ -551,7 +553,7 @@ def main():
         dict_args.update(loss_dict)
 
         dict_args["pretrain_save_location"] = os.path.join(
-            args.output_model_dir, f"{model_name}_complete.pth"
+            args.output_model_dir, f"{model_name}_{args.process_num}_complete.pth"
         )
 
         # to be updated in the downstream task training runs
@@ -577,6 +579,7 @@ def main():
         enforcer_mlp=enforcer_mlp,
         model_name=model_name,
         optimal_loss=optimal_loss,
+        process_num=args.process_num,
     )
 
     return config_id
