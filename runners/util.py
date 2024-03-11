@@ -35,8 +35,10 @@ def CL_acc(x1, x2, pos_mask=None):
     true_negatives = (
         num_negatives - (((~preds).long() - neg_mask) * neg_mask).count_nonzero()
     )
+
     true_positive_rate = true_positives / num_positives
     true_negative_rate = true_negatives / num_negatives
+
     return (
         (true_positives / num_positives + true_negatives / num_negatives) / 2,
         true_positive_rate,

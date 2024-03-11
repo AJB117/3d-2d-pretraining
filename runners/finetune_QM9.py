@@ -122,7 +122,7 @@ def model_setup():
             nn.Linear(intermediate_dim, intermediate_dim),
         ).to(device)
 
-    final_linear = nn.Linear(intermediate_dim, num_tasks).to(device)
+    final_linear = nn.Linear((intermediate_dim) * 2, num_tasks).to(device)
 
     down_project = nn.Sequential(
         nn.Linear(args.emb_dim_pos, args.emb_dim_pos // 2),
@@ -144,6 +144,13 @@ def model_setup():
         ),
     ).to(device)
 
+    enforcer_mlp = nn.Sequential(  # enforce equivariance
+        nn.Linear(3, 3),
+        nn.BatchNorm1d(3),
+        nn.ReLU(),
+        nn.Linear(3, 3),
+    ).to(device)
+
     return (
         model_3d,
         model_2d,
@@ -151,6 +158,7 @@ def model_setup():
         down_project,
         model_2D_pos,
         final_linear,
+        enforcer_mlp,
     )
 
 
@@ -160,6 +168,7 @@ def load_model(
     graph_pred_linear,
     model_weight_file,
     down_project=None,
+    enforcer_mlp=None,
     model_pos=None,
 ):
     print("Loading from {}".format(model_weight_file))
@@ -168,6 +177,7 @@ def load_model(
         model_2d.load_state_dict(model_weight["model_2D"])
         model_pos.load_state_dict(model_weight["model_2D_pos"])
         down_project.load_state_dict(model_weight["down_project"])
+        enforcer_mlp.load_state_dict(model_weight["enforcer_mlp"])
 
         if (graph_pred_linear is not None) and ("graph_pred_linear" in model_weight):
             graph_pred_linear.load_state_dict(model_weight["graph_pred_linear"])
@@ -224,6 +234,7 @@ def save_model(save_best):
 def train(epoch, device, loader, optimizer):
     if args.use_3d:
         model_3d.train()
+        model_2d.train()
     elif args.use_2d:
         model_2d.train()
 
@@ -248,10 +259,20 @@ def train(epoch, device, loader, optimizer):
             pos_synth = down_project(node_2D_pos_repr)  # synthetic coords
 
             if args.use_3d:
-                node_3D_repr, _ = model_3d(
-                    batch.x, pos_synth, batch.edge_index, batch.edge_attr
-                )
-                molecule_repr = global_mean_pool(node_3D_repr, batch.batch)
+                if args.model_3d == "EGNN":
+                    node_3D_repr, _ = model_3d(
+                        batch.x, pos_synth, batch.edge_index, batch.edge_attr
+                    )
+                    molecule_repr_3d = global_mean_pool(node_3D_repr, batch.batch)
+
+                elif args.model_3d == "SchNet":
+                    molecule_repr_3d = model_3d(batch.x, pos_synth, batch.batch)
+
+                node_2D_repr = model_2d(batch.x, batch.edge_index, batch.edge_attr)
+                molecule_repr_2d = global_mean_pool(node_2D_repr, batch.batch)
+
+                molecule_repr = torch.cat([molecule_repr_3d, molecule_repr_2d], dim=1)
+
             if args.use_2d:
                 node_2D_repr = model_2d(batch.x, batch.edge_index, batch.edge_attr)
                 # todo
@@ -303,7 +324,6 @@ def train(epoch, device, loader, optimizer):
 def eval(device, loader):
     if args.use_3d:
         model_3d.eval()
-    elif args.use_2d:
         model_2d.eval()
 
     if graph_pred_linear is not None:
@@ -327,10 +347,20 @@ def eval(device, loader):
             pos_synth = down_project(node_2D_pos_repr)  # synthetic coords
 
             if args.use_3d:
-                node_3D_repr, _ = model_3d(
-                    batch.x, pos_synth, batch.edge_index, batch.edge_attr
-                )
-                molecule_repr = global_mean_pool(node_3D_repr, batch.batch)
+                if args.model_3d == "EGNN":
+                    node_3D_repr, _ = model_3d(
+                        batch.x, pos_synth, batch.edge_index, batch.edge_attr
+                    )
+                    molecule_repr_3d = global_mean_pool(node_3D_repr, batch.batch)
+
+                elif args.model_3d == "SchNet":
+                    molecule_repr_3d = model_3d(batch.x, pos_synth, batch.batch)
+
+                node_2D_repr = model_2d(batch.x, batch.edge_index, batch.edge_attr)
+                molecule_repr_2d = global_mean_pool(node_2D_repr, batch.batch)
+
+                molecule_repr = torch.cat([molecule_repr_3d, molecule_repr_2d], dim=1)
+
             if args.use_2d:
                 node_2D_repr = model_2d(batch.x, batch.edge_index, batch.edge_attr)
                 # todo
@@ -450,9 +480,15 @@ if __name__ == "__main__":
         intermediate_dim = args.emb_dim
 
     node_class, edge_class = 119, 5
-    model_3d, model_2d, graph_pred_linear, down_project, model_pos, final_linear = (
-        model_setup()
-    )
+    (
+        model_3d,
+        model_2d,
+        graph_pred_linear,
+        down_project,
+        model_pos,
+        final_linear,
+        enforcer_mlp,
+    ) = model_setup()
 
     if args.input_model_file != "":
         load_model(
@@ -461,6 +497,7 @@ if __name__ == "__main__":
             graph_pred_linear,
             args.input_model_file,
             down_project=down_project,
+            enforcer_mlp=enforcer_mlp,
             model_pos=model_pos,
         )
     else:
