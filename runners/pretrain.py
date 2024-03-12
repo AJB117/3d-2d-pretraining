@@ -113,7 +113,7 @@ def train(
     model_3D.eval()
 
     CL_loss_accum, CL_acc_accum = 0, 0
-    CL_tp_rate_accum, CL_fp_rate_accum = 0, 0
+    CL_tp_rate_accum, CL_tn_rate_accum = 0, 0
     rot_loss_accum = 0
     trans_loss_accum = 0
     bond_length_loss_accum = 0
@@ -152,7 +152,7 @@ def train(
         CL_loss_accum += invariant_loss
         CL_acc_accum += CL_acc(mol_2d_repr, mol_3d_repr)[0]
         CL_tp_rate_accum += CL_acc(mol_2d_repr, mol_3d_repr)[1]
-        CL_fp_rate_accum += CL_acc(mol_2d_repr, mol_3d_repr)[2]
+        CL_tn_rate_accum += CL_acc(mol_2d_repr, mol_3d_repr)[2]
 
         # equivariant loss
         pos_synth = down_project(node_2D_pos_repr)
@@ -231,8 +231,6 @@ def train(
         if args.lr_scheduler in ["CosineAnnealingWarmRestarts"]:
             lr_scheduler.step(epoch - 1 + step / num_iters)
 
-            loss_accum /= len(loader)
-
     if args.lr_scheduler in ["StepLR", "CosineAnnealingLR"]:
         lr_scheduler.step()
     elif args.lr_scheduler in ["ReduceLROnPlateau"]:
@@ -241,7 +239,7 @@ def train(
     CL_loss_accum /= len(loader)
     CL_acc_accum /= len(loader)
     CL_tp_rate_accum /= len(loader)
-    CL_fp_rate_accum /= len(loader)
+    CL_tn_rate_accum /= len(loader)
     rot_loss_accum /= len(loader)
     trans_loss_accum /= len(loader)
     bond_length_loss_accum /= len(loader)
@@ -251,8 +249,8 @@ def train(
 
     print("CL Loss: {:.5f}\tCL Acc: {:.5f}".format(CL_loss_accum, CL_acc_accum))
     print(
-        "CL TP Rate: {:.5f}\tCL FP Rate: {:.5f}".format(
-            CL_tp_rate_accum, CL_fp_rate_accum
+        "CL TP Rate: {:.5f}\tCL TN Rate: {:.5f}".format(
+            CL_tp_rate_accum, CL_tn_rate_accum
         )
     )
     print(
