@@ -14,7 +14,7 @@ from torch_geometric.nn import global_max_pool, global_mean_pool
 from tqdm import tqdm
 
 from config import args
-from Geom3D.models import GNN, GraphPredLinear, SchNet, EGNN
+from Geom3D.models import GNN, GraphPredLinear, SchNet, EGNN, GNN_NoAtom
 from Geom3D.datasets import (
     MoleculeDatasetQM9,
     GeneratedMoleculeDatasetQM9,
@@ -114,6 +114,14 @@ def model_setup():
         gnn_type=args.gnn_type_pos,
     ).to(device)
 
+    model_2d_combined = GNN_NoAtom(
+        args.num_layer,
+        args.emb_dim + 3,
+        JK=args.JK,
+        drop_ratio=args.dropout_ratio,
+        gnn_type=args.gnn_type,
+    ).to(device)
+
     if args.mode == "method":
         graph_pred_linear = nn.Sequential(
             nn.Linear(intermediate_dim, intermediate_dim),
@@ -123,12 +131,20 @@ def model_setup():
         ).to(device)
 
     # final_linear = nn.Linear(intermediate_dim, num_tasks).to(device)
-    final_linear = nn.Sequential(
-        nn.Linear(intermediate_dim, intermediate_dim // 2),
-        nn.BatchNorm1d(intermediate_dim // 2),
-        nn.ReLU(),
-        nn.Linear(intermediate_dim // 2, num_tasks),
-    ).to(device)
+    if args.use_2d:
+        final_linear = nn.Sequential(
+            nn.Linear(intermediate_dim + 3, intermediate_dim // 2),
+            nn.BatchNorm1d(intermediate_dim // 2),
+            nn.ReLU(),
+            nn.Linear(intermediate_dim // 2, num_tasks),
+        ).to(device)
+    else:
+        final_linear = nn.Sequential(
+            nn.Linear(intermediate_dim, intermediate_dim // 2),
+            nn.BatchNorm1d(intermediate_dim // 2),
+            nn.ReLU(),
+            nn.Linear(intermediate_dim // 2, num_tasks),
+        ).to(device)
 
     down_project = nn.Sequential(
         nn.Linear(args.emb_dim_pos, args.emb_dim_pos // 2),
@@ -165,6 +181,7 @@ def model_setup():
         model_2D_pos,
         final_linear,
         enforcer_mlp,
+        model_2d_combined,
     )
 
 
@@ -285,7 +302,12 @@ def train(epoch, device, loader, optimizer):
 
             if args.use_2d:
                 node_2D_repr = model_2d(batch.x, batch.edge_index, batch.edge_attr)
-                # todo
+                node_2D_repr_combined = torch.cat([node_2D_repr, pos_synth], dim=1)
+                node_2D_repr_combined_h = model_2d_combined(
+                    node_2D_repr_combined, batch.edge_index, batch.edge_attr
+                )
+
+                molecule_repr = global_mean_pool(node_2D_repr_combined_h, batch.batch)
 
         else:
             if args.use_3d and args.model_3d == "EGNN":
@@ -376,7 +398,12 @@ def eval(device, loader):
 
             if args.use_2d:
                 node_2D_repr = model_2d(batch.x, batch.edge_index, batch.edge_attr)
-                # todo
+                node_2D_repr_combined = torch.cat([node_2D_repr, pos_synth], dim=1)
+                node_2D_repr_combined_h = model_2d_combined(
+                    node_2D_repr_combined, batch.edge_index, batch.edge_attr
+                )
+
+                molecule_repr = global_mean_pool(node_2D_repr_combined_h, batch.batch)
 
         else:
             if args.use_3d and args.model_3d == "EGNN":
@@ -501,6 +528,7 @@ if __name__ == "__main__":
         model_pos,
         final_linear,
         enforcer_mlp,
+        model_2d_combined,
     ) = model_setup()
 
     if args.input_model_file != "":
@@ -535,6 +563,10 @@ if __name__ == "__main__":
 
     if args.mode == "method":
         model_param_group.append({"params": final_linear.parameters(), "lr": args.lr})
+        model_param_group = [{"params": model_2d.parameters(), "lr": args.lr}]
+        model_param_group.append(
+            {"params": model_2d_combined.parameters(), "lr": args.lr}
+        )
 
     if graph_pred_linear is not None:
         model_param_group.append(
