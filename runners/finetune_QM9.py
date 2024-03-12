@@ -122,7 +122,13 @@ def model_setup():
             nn.Linear(intermediate_dim, intermediate_dim),
         ).to(device)
 
-    final_linear = nn.Linear((intermediate_dim) * 2, num_tasks).to(device)
+    # final_linear = nn.Linear(intermediate_dim, num_tasks).to(device)
+    final_linear = nn.Sequential(
+        nn.Linear(intermediate_dim, intermediate_dim // 2),
+        nn.BatchNorm1d(intermediate_dim // 2),
+        nn.ReLU(),
+        nn.Linear(intermediate_dim // 2, num_tasks),
+    ).to(device)
 
     down_project = nn.Sequential(
         nn.Linear(args.emb_dim_pos, args.emb_dim_pos // 2),
@@ -222,6 +228,7 @@ def save_model(save_best):
         saved_model_dict["model_2D_pos"] = model_pos.state_dict()
         saved_model_dict["down_project"] = down_project.state_dict()
         saved_model_dict["final_linear"] = final_linear.state_dict()
+        saved_model_dict["enforcer_mlp"] = enforcer_mlp.state_dict()
 
     if graph_pred_linear is not None:
         saved_model_dict["graph_pred_linear"] = graph_pred_linear.state_dict()
@@ -244,6 +251,8 @@ def train(epoch, device, loader, optimizer):
     if model_pos is not None:
         model_pos.eval()
 
+    enforcer_mlp.eval()
+
     loss_acc = 0
     num_iters = len(loader)
 
@@ -257,6 +266,7 @@ def train(epoch, device, loader, optimizer):
         if args.mode == "method":
             node_2D_pos_repr = model_pos(batch.x, batch.edge_index, batch.edge_attr)
             pos_synth = down_project(node_2D_pos_repr)  # synthetic coords
+            pos_synth = enforcer_mlp(pos_synth)
 
             if args.use_3d:
                 if args.model_3d == "EGNN":
@@ -271,7 +281,7 @@ def train(epoch, device, loader, optimizer):
                 node_2D_repr = model_2d(batch.x, batch.edge_index, batch.edge_attr)
                 molecule_repr_2d = global_mean_pool(node_2D_repr, batch.batch)
 
-                molecule_repr = torch.cat([molecule_repr_3d, molecule_repr_2d], dim=1)
+                molecule_repr = (molecule_repr_3d + molecule_repr_2d) / 2
 
             if args.use_2d:
                 node_2D_repr = model_2d(batch.x, batch.edge_index, batch.edge_attr)
@@ -332,6 +342,8 @@ def eval(device, loader):
     if model_pos is not None:
         model_pos.eval()
 
+    enforcer_mlp.eval()
+
     y_true = []
     y_scores = []
 
@@ -345,6 +357,7 @@ def eval(device, loader):
         if args.mode == "method":
             node_2D_pos_repr = model_pos(batch.x, batch.edge_index, batch.edge_attr)
             pos_synth = down_project(node_2D_pos_repr)  # synthetic coords
+            pos_synth = enforcer_mlp(pos_synth)
 
             if args.use_3d:
                 if args.model_3d == "EGNN":
@@ -359,7 +372,7 @@ def eval(device, loader):
                 node_2D_repr = model_2d(batch.x, batch.edge_index, batch.edge_attr)
                 molecule_repr_2d = global_mean_pool(node_2D_repr, batch.batch)
 
-                molecule_repr = torch.cat([molecule_repr_3d, molecule_repr_2d], dim=1)
+                molecule_repr = (molecule_repr_3d + molecule_repr_2d) / 2
 
             if args.use_2d:
                 node_2D_repr = model_2d(batch.x, batch.edge_index, batch.edge_attr)
