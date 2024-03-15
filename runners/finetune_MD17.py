@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from config import args
 from Geom3D.datasets import DatasetMD17, MoleculeDataset3DRadius
-from Geom3D.models import SchNet, PaiNN
+from Geom3D.models import SchNet, PaiNN, GNN
 
 from torch.autograd import grad
 
@@ -52,9 +52,14 @@ def train(device, loader):
 
         if args.model_3d == "SchNet":
             molecule_3D_repr = model(x, positions, batch_data.batch)
+        if args.model_3d == "EGNN":
+            node_3D_repr, _ = model(x, pos_synth, batch.edge_index, batch.edge_attr)
+            molecule_repr_3d = global_mean_pool(node_3D_repr, batch.batch)
         elif args.model_3d == "PaiNN":
-            molecule_3D_repr = model(x, positions, batch_data.radius_edge_index, batch_data.batch)
-            
+            molecule_3D_repr = model(
+                x, positions, batch_data.radius_edge_index, batch_data.batch
+            )
+
         if graph_pred_linear is not None:
             pred_energy = graph_pred_linear(molecule_3D_repr).squeeze(1)
         else:
@@ -65,13 +70,21 @@ def train(device, loader):
             # total_energy = out["total_energy"] * FORCE_MEAN_TOTAL + ENERGY_MEAN_TOTAL * NUM_ATOM
             pred_energy = pred_energy * FORCE_MEAN_TOTAL + ENERGY_MEAN_TOTAL * NUM_ATOM
 
-        pred_force = -grad(outputs=pred_energy, inputs=positions, grad_outputs=torch.ones_like(pred_energy), create_graph=True, retain_graph=True)[0]
+        pred_force = -grad(
+            outputs=pred_energy,
+            inputs=positions,
+            grad_outputs=torch.ones_like(pred_energy),
+            create_graph=True,
+            retain_graph=True,
+        )[0]
 
         actual_energy = batch_data.y
         actual_force = batch_data.force
 
         # TODO: Check this: https://github.com/divelab/DIG/blob/dig-stable/dig/threedgraph/method/run.py#L178
-        loss = args.MD17_energy_coeff * criterion(pred_energy, actual_energy) + args.MD17_force_coeff * criterion(pred_force, actual_force)
+        loss = args.MD17_energy_coeff * criterion(
+            pred_energy, actual_energy
+        ) + args.MD17_force_coeff * criterion(pred_force, actual_force)
 
         optimizer.zero_grad()
         loss.backward()
@@ -112,7 +125,9 @@ def eval(device, loader):
         if args.model_3d == "SchNet":
             molecule_3D_repr = model(x, positions, batch_data.batch)
         elif args.model_3d == "PaiNN":
-            molecule_3D_repr = model(x, positions, batch_data.radius_edge_index, batch_data.batch)
+            molecule_3D_repr = model(
+                x, positions, batch_data.radius_edge_index, batch_data.batch
+            )
 
         if graph_pred_linear is not None:
             pred_energy = graph_pred_linear(molecule_3D_repr).squeeze(1)
@@ -122,7 +137,13 @@ def eval(device, loader):
         if args.energy_force_with_normalization:
             pred_energy = pred_energy * FORCE_MEAN_TOTAL + ENERGY_MEAN_TOTAL * NUM_ATOM
 
-        force = -grad(outputs=pred_energy, inputs=positions, grad_outputs=torch.ones_like(pred_energy), create_graph=True, retain_graph=True)[0].detach_()
+        force = -grad(
+            outputs=pred_energy,
+            inputs=positions,
+            grad_outputs=torch.ones_like(pred_energy),
+            create_graph=True,
+            retain_graph=True,
+        )[0].detach_()
 
         if torch.sum(torch.isnan(force)) != 0:
             mask = torch.isnan(force)
@@ -136,7 +157,9 @@ def eval(device, loader):
 
     pred_energy_list = torch.cat(pred_energy_list, dim=0)
     actual_energy_list = torch.cat(actual_energy_list, dim=0)
-    energy_mae = torch.mean(torch.abs(pred_energy_list - actual_energy_list)).cpu().item()
+    energy_mae = (
+        torch.mean(torch.abs(pred_energy_list - actual_energy_list)).cpu().item()
+    )
     force_mae = torch.mean(torch.abs(pred_force_list - actual_force_list)).cpu().item()
 
     return energy_mae, force_mae
@@ -200,20 +223,25 @@ if __name__ == "__main__":
     if args.dataset == "MD17":
         data_root = "../data/MD17"
         dataset = DatasetMD17(data_root, task=args.task)
-        split_idx = dataset.get_idx_split(len(dataset.data.y), train_size=1000, valid_size=1000, seed=args.seed)
+        split_idx = dataset.get_idx_split(
+            len(dataset.data.y), train_size=1000, valid_size=1000, seed=args.seed
+        )
     print("train:", len(split_idx["train"]), split_idx["train"][:5])
     print("valid:", len(split_idx["valid"]), split_idx["valid"][:5])
     print("test:", len(split_idx["test"]), split_idx["test"][:5])
 
     if args.model_3d == "PaiNN":
-        data_root = "../data/{}_{}/{}".format(args.dataset, args.PaiNN_radius_cutoff, args.task)
-        dataset = MoleculeDataset3DRadius(
-            data_root,
-            preprcessed_dataset=dataset,
-            radius=args.PaiNN_radius_cutoff
+        data_root = "../data/{}_{}/{}".format(
+            args.dataset, args.PaiNN_radius_cutoff, args.task
         )
-    train_dataset, val_dataset, test_dataset = \
-        dataset[split_idx['train']], dataset[split_idx['valid']], dataset[split_idx['test']]
+        dataset = MoleculeDataset3DRadius(
+            data_root, preprcessed_dataset=dataset, radius=args.PaiNN_radius_cutoff
+        )
+    train_dataset, val_dataset, test_dataset = (
+        dataset[split_idx["train"]],
+        dataset[split_idx["valid"]],
+        dataset[split_idx["test"]],
+    )
 
     ENERGY_MEAN_TOTAL = 0
     FORCE_MEAN_TOTAL = 0
@@ -234,9 +262,27 @@ if __name__ == "__main__":
     DataLoaderClass = DataLoader
     dataloader_kwargs = {}
 
-    train_loader = DataLoaderClass(train_dataset, args.MD17_train_batch_size, shuffle=True, num_workers=args.num_workers, **dataloader_kwargs)
-    val_loader = DataLoaderClass(val_dataset, args.batch_size, shuffle=False, num_workers=args.num_workers, **dataloader_kwargs)
-    test_loader = DataLoaderClass(test_dataset, args.batch_size, shuffle=False, num_workers=args.num_workers, **dataloader_kwargs)
+    train_loader = DataLoaderClass(
+        train_dataset,
+        args.MD17_train_batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        **dataloader_kwargs,
+    )
+    val_loader = DataLoaderClass(
+        val_dataset,
+        args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        **dataloader_kwargs,
+    )
+    test_loader = DataLoaderClass(
+        test_dataset,
+        args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        **dataloader_kwargs,
+    )
 
     # # TODO: debugging only
     # test_loader = DataLoaderClass(val_dataset, args.batch_size, shuffle=False, num_workers=args.num_workers, **dataloader_kwargs)
@@ -311,7 +357,10 @@ if __name__ == "__main__":
         print("Apply lr scheduler StepLR")
     elif args.lr_scheduler == "ReduceLROnPlateau":
         lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, factor=args.lr_decay_factor, patience=args.lr_decay_patience, min_lr=args.min_lr
+            optimizer,
+            factor=args.lr_decay_factor,
+            patience=args.lr_decay_patience,
+            min_lr=args.min_lr,
         )
         print("Apply lr scheduler ReduceLROnPlateau")
     else:
@@ -343,8 +392,16 @@ if __name__ == "__main__":
             val_force_mae_list.append(val_force_mae)
             test_energy_mae_list.append(test_energy_mae)
             test_force_mae_list.append(test_force_mae)
-            print("Energy\ttrain: {:.6f}\tval: {:.6f}\ttest: {:.6f}".format(train_energy_mae, val_energy_mae, test_energy_mae))
-            print("Force\ttrain: {:.6f}\tval: {:.6f}\ttest: {:.6f}".format(train_force_mae, val_force_mae, test_force_mae))
+            print(
+                "Energy\ttrain: {:.6f}\tval: {:.6f}\ttest: {:.6f}".format(
+                    train_energy_mae, val_energy_mae, test_energy_mae
+                )
+            )
+            print(
+                "Force\ttrain: {:.6f}\tval: {:.6f}\ttest: {:.6f}".format(
+                    train_force_mae, val_force_mae, test_force_mae
+                )
+            )
 
             if val_force_mae < best_val_force_mae:
                 best_val_force_mae = val_force_mae
@@ -352,15 +409,30 @@ if __name__ == "__main__":
                 if not args.output_model_dir == "":
                     save_model(save_best=True)
         print("Took\t{}\n".format(time.time() - start_time))
-    
+
     save_model(save_best=False)
 
     if args.eval_test:
-        optimal_test_energy, optimal_test_force = test_energy_mae_list[best_val_idx], test_force_mae_list[best_val_idx]
+        optimal_test_energy, optimal_test_force = (
+            test_energy_mae_list[best_val_idx],
+            test_force_mae_list[best_val_idx],
+        )
     else:
         optimal_model_weight = os.path.join(args.output_model_dir, "model.pth")
         load_model(model, graph_pred_linear, optimal_model_weight, load_latest=True)
         optimal_test_energy, optimal_test_force = eval(device, test_loader)
 
-    print("best Energy\ttrain: {:.6f}\tval: {:.6f}\ttest: {:.6f}".format(train_energy_mae_list[best_val_idx], val_energy_mae_list[best_val_idx], optimal_test_energy))
-    print("best Force\ttrain: {:.6f}\tval: {:.6f}\ttest: {:.6f}".format(train_force_mae_list[best_val_idx], val_force_mae_list[best_val_idx], optimal_test_force))
+    print(
+        "best Energy\ttrain: {:.6f}\tval: {:.6f}\ttest: {:.6f}".format(
+            train_energy_mae_list[best_val_idx],
+            val_energy_mae_list[best_val_idx],
+            optimal_test_energy,
+        )
+    )
+    print(
+        "best Force\ttrain: {:.6f}\tval: {:.6f}\ttest: {:.6f}".format(
+            train_force_mae_list[best_val_idx],
+            val_force_mae_list[best_val_idx],
+            optimal_test_force,
+        )
+    )

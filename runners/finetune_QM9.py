@@ -243,6 +243,7 @@ def save_model(save_best):
 
     if args.mode == "method":
         saved_model_dict["model_2D_pos"] = model_pos.state_dict()
+        saved_model_dict["model_3D"] = model_3d.state_dict()
         saved_model_dict["down_project"] = down_project.state_dict()
         saved_model_dict["final_linear"] = final_linear.state_dict()
         saved_model_dict["enforcer_mlp"] = enforcer_mlp.state_dict()
