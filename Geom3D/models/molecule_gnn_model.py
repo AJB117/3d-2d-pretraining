@@ -149,6 +149,72 @@ class GraphSAGEConv(MessagePassing):
         return F.normalize(aggr_out, p=2, dim=-1)
 
 
+class GNN_NoAtom(nn.Module):
+    def __init__(self, num_layer, emb_dim, JK="last", drop_ratio=0, gnn_type="gin"):
+        super(GNN_NoAtom, self).__init__()
+        self.num_layer = num_layer
+        self.drop_ratio = drop_ratio
+        self.JK = JK
+
+        if self.num_layer < 2:
+            raise ValueError("Number of GNN layers must be greater than 1.")
+
+        self.atom_encoder = AtomEncoder(emb_dim)
+
+        ###List of MLPs
+        self.gnns = nn.ModuleList()
+        for layer in range(num_layer):
+            if gnn_type == "GIN":
+                self.gnns.append(GINConv(emb_dim))
+            elif gnn_type == "GCN":
+                self.gnns.append(GCNConv(emb_dim))
+            elif gnn_type == "GAT":
+                self.gnns.append(GATConv(emb_dim))
+            elif gnn_type == "GraphSAGE":
+                self.gnns.append(GraphSAGEConv(emb_dim))
+
+        ###List of batchnorms
+        self.batch_norms = nn.ModuleList()
+        for layer in range(num_layer):
+            self.batch_norms.append(nn.BatchNorm1d(emb_dim))
+
+    # def forward(self, x, edge_index, edge_attr):
+    def forward(self, *argv):
+        if len(argv) == 3:
+            x, edge_index, edge_attr = argv[0], argv[1], argv[2]
+        elif len(argv) == 1:
+            data = argv[0]
+            x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
+        else:
+            raise ValueError("unmatched number of arguments.")
+
+        h_list = [x]
+        for layer in range(self.num_layer):
+            h = self.gnns[layer](h_list[layer], edge_index, edge_attr)
+            h = self.batch_norms[layer](h)
+            # h = F.dropout(F.relu(h), self.drop_ratio, training = self.training)
+            if layer == self.num_layer - 1:
+                # remove relu for the last layer
+                h = F.dropout(h, self.drop_ratio, training=self.training)
+            else:
+                h = F.dropout(F.relu(h), self.drop_ratio, training=self.training)
+            h_list.append(h)
+
+        ### Different implementations of Jk-concat
+        if self.JK == "concat":
+            node_representation = torch.cat(h_list, dim=1)
+        elif self.JK == "last":
+            node_representation = h_list[-1]
+        elif self.JK == "max":
+            h_list = [h.unsqueeze_(0) for h in h_list]
+            node_representation = torch.max(torch.cat(h_list, dim=0), dim=0)[0]
+        elif self.JK == "sum":
+            h_list = [h.unsqueeze_(0) for h in h_list]
+            node_representation = torch.sum(torch.cat(h_list, dim=0), dim=0)[0]
+
+        return node_representation
+
+
 class GNN(nn.Module):
     def __init__(self, num_layer, emb_dim, JK="last", drop_ratio=0, gnn_type="gin"):
         super(GNN, self).__init__()
@@ -172,6 +238,7 @@ class GNN(nn.Module):
                 self.gnns.append(GATConv(emb_dim))
             elif gnn_type == "GraphSAGE":
                 self.gnns.append(GraphSAGEConv(emb_dim))
+            elif gnn_type
 
         ###List of batchnorms
         self.batch_norms = nn.ModuleList()
