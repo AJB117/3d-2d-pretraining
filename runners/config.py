@@ -195,5 +195,31 @@ parser.add_argument(
     help="use 2d gnn during finetuning with synthetic coordinates concatenated",
 )
 
+# DEEP INTERACTION HYPERPARAMS
+parser.add_argument(
+    "--interaction_rep_2d",
+    type=str,
+    default="mean",
+    choices=["sum", "mean", "vnode"],
+    help="how to represent the interaction",
+)
+parser.add_argument(
+    "--interaction_rep_3d",
+    type=str,
+    default="mean",
+    choices=["sum", "mean", "com", "const_radius"],
+    help="how to represent the interaction for 3D GNN, com: center of mass, const_radius: hardcoded constant radius",
+)
+parser.add_argument(
+    "--interaction_agg",
+    type=str,
+    choices=["cat", "sum", "add"],
+    default="cat",
+    help="how to aggregate the interactions",
+)
+parser.add_argument(
+    "--num_interaction_blocks", type=int, default=6, help="number of interaction blocks"
+)
+
 args = parser.parse_args()
 print("arguments\t", args)

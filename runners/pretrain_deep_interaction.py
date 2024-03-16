@@ -39,9 +39,7 @@ def compute_accuracy(pred, target):
 def save_model(
     save_best,
     graph_pred_linear,
-    down_project,
     molecule_model_2D,
-    molecule_model_2D_pos,
     molecule_model_3D,
     model_name,
 ):
@@ -50,9 +48,7 @@ def save_model(
 
     saver_dict = {
         "graph_pred_linear": graph_pred_linear.state_dict(),
-        "down_project": down_project.state_dict(),
         "model_2D": molecule_model_2D.state_dict(),
-        "model_2D_pos": molecule_model_2D_pos.state_dict(),
         "model_3D": molecule_model_3D.state_dict(),
     }
     if save_best:
@@ -132,11 +128,6 @@ def train(
     molecule_model_3D.eval()
 
     CL_loss_accum, CL_acc_accum = 0, 0
-    rot_loss_accum = 0
-    trans_loss_accum = 0
-    bond_length_loss_accum = 0
-    bond_angle_loss_accum = 0
-    matching_loss_accum = 0
     loss_accum = 0
 
     if args.verbose:
@@ -155,74 +146,10 @@ def train(
             node_3D_repr, pos_3D_repr = molecule_model_3D(
                 batch.x, batch.positions, batch.edge_index, batch.edge_attr
             )
+        elif args.model_3d == "SchNet":
+            node_3D_repr = molecule_model_3D(batch.x, batch.edge_index, batch.edge_attr)
 
-        # invariant loss
-        mol_2d_repr = pool(node_2D_repr, batch.batch, pool=args.graph_pooling)
-        mol_2d_repr = graph_pred_linear(mol_2d_repr)
-
-        mol_3d_repr = pool(node_3D_repr, batch.batch, pool=args.graph_pooling)
-
-        invariant_loss = balances[0] * NTXentLoss(mol_2d_repr, mol_3d_repr)
-        CL_loss_accum += invariant_loss
-        CL_acc_accum += CL_acc(mol_2d_repr, mol_3d_repr)
-
-        # equivariant loss
-        pos_synth = down_project(node_2D_pos_repr)
-
-        rotated_pos, translated_pos, _, _ = perturb(node_2D_pos_repr, device=device)
-        rotated_pos_synth, translated_pos_synth, _, _ = perturb(
-            pos_synth, device=device
-        )
-
-        rot_loss = mse_loss(
-            node_2D_pos_repr @ rotated_pos, pos_synth @ rotated_pos_synth
-        )
-        rot_loss_accum += rot_loss
-
-        trans_loss = mse_loss(translated_pos, node_2D_pos_repr) + mse_loss(
-            translated_pos_synth, pos_synth
-        )
-        trans_loss_accum += trans_loss
-
-        equiv_loss = balances[1] * (rot_loss + trans_loss)
-
-        # hybrid loss
-        node_2D_repr = torch.cat([node_2D_repr, pos_synth], dim=1)  # N x (F + 3)
-
-        ## bond length prediction
-        # bond_lengths = batch.bond_lengths  # E x 1, [edge_idx, length]
-        i_emb = node_2D_repr[batch.edge_index[0]]
-        j_emb = node_2D_repr[batch.edge_index[1]]
-
-        dist_vecs = (
-            batch.positions[batch.edge_index[0]] - batch.positions[batch.edge_index[1]]
-        )
-        bond_lengths = dist_vecs.norm(dim=1).unsqueeze(1)
-
-        bond_length_pred = bond_length_predictor(torch.cat([i_emb, j_emb], dim=1))
-        bond_length_loss = mse_loss(bond_length_pred, bond_lengths)
-        bond_length_loss_accum += bond_length_loss
-
-        ## bond angle prediction
-        bond_angles = batch.bond_angles  # E' x 3 x 1, [anchor, src, dst, angle]
-        anchor_emb = node_2D_repr[bond_angles[:, 0].long()]
-        src_emb = node_2D_repr[bond_angles[:, 1].long()]
-        dst_emb = node_2D_repr[bond_angles[:, 2].long()]
-        bond_angle_targets = bond_angles[:, 3].unsqueeze(1)
-
-        bond_angle_pred = bond_angle_predictor(
-            torch.cat([src_emb, anchor_emb, dst_emb], dim=1)
-        )
-        bond_angle_loss = mse_loss(bond_angle_pred, bond_angle_targets)
-        bond_angle_loss_accum += bond_angle_loss
-
-        hybrid_loss = balances[2] * (bond_length_loss + bond_angle_loss)
-
-        # matching loss
-        matching_loss = balances[3] * mse_loss(pos_synth, pos_3D_repr)
-        matching_loss_accum += matching_loss
-
-        loss = invariant_loss + equiv_loss + hybrid_loss + matching_loss
+        loss = 0
         loss_accum += loss
 
         optimizer.zero_grad()
@@ -230,7 +157,6 @@ def train(
         optimizer.step()
         if args.lr_scheduler in ["CosineAnnealingWarmRestarts"]:
             lr_scheduler.step(epoch - 1 + step / num_iters)
-
             loss_accum /= len(loader)
 
     if args.lr_scheduler in ["StepLR", "CosineAnnealingLR"]:
@@ -242,23 +168,8 @@ def train(
     CL_loss_accum /= len(loader)
     CL_acc_accum /= len(loader)
 
-    rot_loss_accum /= len(loader)
-    trans_loss_accum /= len(loader)
-    bond_length_loss_accum /= len(loader)
-    bond_angle_loss_accum /= len(loader)
-    matching_loss_accum /= len(loader)
     loss_accum /= len(loader)
 
-    print("CL Loss: {:.5f}\tCL Acc: {:.5f}".format(CL_loss_accum, CL_acc_accum))
-    print(
-        "Rot Loss: {:.5f}\tTrans Loss: {:.5f}".format(rot_loss_accum, trans_loss_accum)
-    )
-    print(
-        "Bond Length Loss: {:.5f}\tBond Angle Loss: {:.5f}".format(
-            bond_length_loss_accum, bond_angle_loss_accum
-        )
-    )
-    print("Matching Loss: {:.5f}".format(matching_loss_accum))
     print("Total Loss: {:.5f}".format(loss_accum))
 
     print("Time: {:.5f}\n".format(time.time() - start_time))
@@ -270,9 +181,7 @@ def train(
         save_model(
             save_best=True,
             graph_pred_linear=graph_pred_linear,
-            down_project=down_project,
             molecule_model_2D=molecule_model_2D,
-            molecule_model_2D_pos=molecule_model_2D_pos,
             molecule_model_3D=molecule_model_3D,
             model_name=model_name,
         )
@@ -280,13 +189,6 @@ def train(
     loss_dict = {
         "CL_loss_accum": CL_loss_accum.item(),
         "CL_acc_accum": CL_acc_accum.item(),
-        "rot_loss_accum": rot_loss_accum.item(),
-        "trans_loss_accum": trans_loss_accum.item(),
-        "bond_length_loss_accum": bond_length_loss_accum.item(),
-        "bond_angle_loss_accum": bond_angle_loss_accum.item(),
-        "matching_loss_accum": matching_loss_accum.item(),
-        "pretrain_loss_accum": loss_accum.item(),
-        "pretrain_optimal_loss": optimal_loss.item(),
     }
 
     return loss_dict
@@ -389,24 +291,12 @@ def main():
         nn.Linear(intermediate_dim, intermediate_dim),
     ).to(device)
 
-    down_project = nn.Sequential(
-        nn.Linear(args.emb_dim_pos, args.emb_dim_pos // 2),
-        nn.BatchNorm1d(args.emb_dim_pos // 2),
+    twice_dim = intermediate_dim * 2
+    mixer_mlp = nn.Sequential(
+        nn.Linear(twice_dim, twice_dim),
+        nn.BatchNorm1d(twice_dim),
         nn.ReLU(),
-        nn.Linear(
-            args.emb_dim_pos // 2,
-            args.emb_dim_pos // 2,
-        ),
-        nn.BatchNorm1d(args.emb_dim_pos // 2),
-        nn.ReLU(),
-        nn.Linear(
-            args.emb_dim_pos // 2,
-            args.emb_dim_pos // 4,
-        ),
-        nn.Linear(
-            args.emb_dim_pos // 4,
-            3,
-        ),
+        nn.Linear(twice_dim, twice_dim),
     ).to(device)
 
     if args.input_model_file_3d != "":
@@ -474,7 +364,6 @@ def main():
             loader,
             optimizer,
             graph_pred_linear=graph_pred_linear,
-            down_project=down_project,
             lr_scheduler=lr_scheduler,
             epoch=epoch,
         )
@@ -516,9 +405,7 @@ def main():
     save_model(
         save_best=False,
         graph_pred_linear=graph_pred_linear,
-        down_project=down_project,
         molecule_model_2D=molecule_model_2D,
-        molecule_model_2D_pos=molecule_model_2D_pos,
         molecule_model_3D=molecule_model_3D,
         model_name=model_name,
     )
