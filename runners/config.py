@@ -206,7 +206,7 @@ parser.add_argument(
 parser.add_argument(
     "--interaction_rep_3d",
     type=str,
-    default="mean",
+    default="com",
     choices=["sum", "mean", "com", "const_radius"],
     help="how to represent the interaction for 3D GNN, com: center of mass, const_radius: hardcoded constant radius",
 )

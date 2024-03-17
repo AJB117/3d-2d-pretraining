@@ -210,8 +210,7 @@ def main():
         torch.cuda.manual_seed_all(0)
         torch.cuda.set_device(args.device)
 
-    num_node_classes = 119
-    num_edge_classes = 3
+    num_node_classes = 119 + 1  # add 1 for virtual node
 
     transform = VirtualNodeMol()
     data_root = "{}/{}".format(args.input_data_dir, args.dataset)
