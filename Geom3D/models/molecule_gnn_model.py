@@ -1,3 +1,4 @@
+import pdb
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -12,7 +13,7 @@ from torch_geometric.nn import (
 from torch_geometric.nn.inits import glorot, zeros
 from torch_geometric.utils import add_self_loops, degree, softmax
 from torch_scatter import scatter_add
-from ogb.graphproppred.mol_encoder import AtomEncoder, BondEncoder
+from .encoders import AtomEncoder, BondEncoder
 from typing import List
 
 
@@ -238,7 +239,6 @@ class GNN(nn.Module):
                 self.gnns.append(GATConv(emb_dim))
             elif gnn_type == "GraphSAGE":
                 self.gnns.append(GraphSAGEConv(emb_dim))
-            elif gnn_type
 
         ###List of batchnorms
         self.batch_norms = nn.ModuleList()

@@ -82,7 +82,9 @@ class SchNet(torch.nn.Module):
         if self.atomref is not None:
             self.atomref.weight.data.copy_(self.initial_atomref)
 
-    def forward(self, z, pos, batch=None, return_latent=False):
+    def forward(
+        self, z, pos, batch=None, return_latent=False, interaction_rep_3d="com"
+    ):
         if z.dim() != 1:
             z = z[
                 :, 0
