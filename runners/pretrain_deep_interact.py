@@ -17,8 +17,7 @@ from Geom3D.datasets import Molecule3DDataset, MoleculeDatasetQM9
 from Geom3D.models import GNN, SchNet, EGNN
 from config import args
 from ogb.utils.features import get_atom_feature_dims
-from util import NTXentLoss, perturb
-from torch_geometric.transforms import VirtualNode
+from util import NTXentLoss, perturb, VirtualNodeMol
 
 
 ogb_feat_dim = get_atom_feature_dims()
@@ -147,7 +146,12 @@ def train(
                 batch.x, batch.positions, batch.edge_index, batch.edge_attr
             )
         elif args.model_3d == "SchNet":
-            node_3D_repr = molecule_model_3D(batch.x, batch.edge_index, batch.edge_attr)
+            node_3D_repr = molecule_model_3D(
+                batch.x,
+                batch.positions,
+                batch.batch,
+                interaction_rep=args.interaction_rep_3d,
+            )
 
         loss = 0
         loss_accum += loss
@@ -209,7 +213,7 @@ def main():
     num_node_classes = 119
     num_edge_classes = 3
 
-    transform = VirtualNode
+    transform = VirtualNodeMol()
     data_root = "{}/{}".format(args.input_data_dir, args.dataset)
     try:
         dataset = Molecule3DDataset(
@@ -291,13 +295,21 @@ def main():
         nn.Linear(intermediate_dim, intermediate_dim),
     ).to(device)
 
-    twice_dim = intermediate_dim * 2
-    mixer_mlp = nn.Sequential(
-        nn.Linear(twice_dim, twice_dim),
-        nn.BatchNorm1d(twice_dim),
-        nn.ReLU(),
-        nn.Linear(twice_dim, twice_dim),
-    ).to(device)
+    if args.interaction_agg == "cat":
+        twice_dim = intermediate_dim * 2
+        interactor = nn.Sequential(
+            nn.Linear(twice_dim, twice_dim),
+            nn.BatchNorm1d(twice_dim),
+            nn.ReLU(),
+            nn.Linear(twice_dim, twice_dim),
+        ).to(device)
+    elif args.interaction_agg in ("sum", "add"):
+        interactor = nn.Sequential(
+            nn.Linear(intermediate_dim, intermediate_dim),
+            nn.BatchNorm1d(intermediate_dim),
+            nn.ReLU(),
+            nn.Linear(intermediate_dim, intermediate_dim),
+        ).to(device)
 
     if args.input_model_file_3d != "":
         model_weight = torch.load(args.input_model_file_3d)
@@ -306,8 +318,9 @@ def main():
 
     model_param_group = []
 
-    # MLP heads
+    # non-GNN components
     model_param_group.append({"params": graph_pred_linear.parameters(), "lr": args.lr})
+    model_param_group.append({"params": interactor.parameters(), "lr": args.lr})
 
     # GNNs
     model_param_group.append(

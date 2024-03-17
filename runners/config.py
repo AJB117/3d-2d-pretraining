@@ -201,7 +201,7 @@ parser.add_argument(
     type=str,
     default="mean",
     choices=["sum", "mean", "vnode"],
-    help="how to represent the interaction",
+    help="how to represent the interaction for 2D GNN",
 )
 parser.add_argument(
     "--interaction_rep_3d",
