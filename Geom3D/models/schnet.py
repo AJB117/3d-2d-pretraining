@@ -1,3 +1,4 @@
+import pdb
 import os
 import os.path as osp
 import warnings
@@ -82,15 +83,20 @@ class SchNet(torch.nn.Module):
         if self.atomref is not None:
             self.atomref.weight.data.copy_(self.initial_atomref)
 
-    def forward(
-        self, z, pos, batch=None, return_latent=False, interaction_rep_3d="com"
-    ):
+    def forward(self, z, pos, batch=None, return_latent=False, interaction_rep="com"):
         if z.dim() != 1:
             z = z[
                 :, 0
             ]  # avoid rebuilding the dataset when use_pure_atomic_num is False
         assert z.dim() == 1 and z.dtype == torch.long
         batch = torch.zeros_like(z) if batch is None else batch
+
+        if interaction_rep == "com":
+            mass = self.atomic_mass[z[:-1]].view(-1, 1)
+            c = scatter(mass * pos[:-1], batch[:-1], dim=0) / scatter(
+                mass, batch[:-1], dim=0
+            )
+            pos[-1] = c
 
         h = self.embedding(z)
 
