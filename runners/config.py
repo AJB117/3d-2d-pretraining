@@ -213,12 +213,18 @@ parser.add_argument(
 parser.add_argument(
     "--interaction_agg",
     type=str,
-    choices=["cat", "sum", "add"],
+    choices=["cat", "sum", "mean"],
     default="cat",
     help="how to aggregate the interactions",
 )
 parser.add_argument(
     "--num_interaction_blocks", type=int, default=6, help="number of interaction blocks"
+)
+parser.add_argument(
+    "--final_pool",
+    choices=["cat", "mean", "attention"],
+    default="cat",
+    help="how to pool the final embeddings + interaction emeddings",
 )
 
 args = parser.parse_args()

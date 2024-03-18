@@ -146,7 +146,7 @@ def train(
                 batch.x, batch.positions, batch.edge_index, batch.edge_attr
             )
         elif args.model_3d == "SchNet":
-            node_3D_repr = molecule_model_3D(
+            mol_3D_repr, node_3D_repr = molecule_model_3D(
                 batch.x,
                 batch.positions,
                 batch.batch,
@@ -302,7 +302,7 @@ def main():
             nn.ReLU(),
             nn.Linear(twice_dim, twice_dim),
         ).to(device)
-    elif args.interaction_agg in ("sum", "add"):
+    elif args.interaction_agg in ("sum", "mean"):
         interactor = nn.Sequential(
             nn.Linear(intermediate_dim, intermediate_dim),
             nn.BatchNorm1d(intermediate_dim),
