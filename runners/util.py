@@ -326,7 +326,9 @@ class VirtualNodeMol(BaseTransform):
     """
 
     def __call__(self, data: Data) -> Data:
+        assert data.edge_index is not None
         num_nodes, (row, col) = data.num_nodes, data.edge_index
+        assert num_nodes is not None
         edge_type = data.get("edge_type", torch.zeros_like(row))
 
         atom_feats = get_atom_feature_dims()
@@ -343,7 +345,7 @@ class VirtualNodeMol(BaseTransform):
 
         old_data = copy.copy(data)
         for key, value in old_data.items():
-            if key == "edge_index" or key == "edge_type":
+            if key == "edge_index" or key == "edge_type" or key == "y":
                 continue
 
             if isinstance(value, Tensor):
@@ -364,14 +366,20 @@ class VirtualNodeMol(BaseTransform):
                     size[dim] = 1
                     fill_value = 0.0
 
-                if fill_value is not None and old_data.is_edge_attr(key):
+                if (
+                    fill_value is not None
+                    and old_data.is_edge_attr(key)
+                    and key != "bond_lengths"
+                    and key != "bond_angles"
+                ):
                     new_value = (
                         torch.tensor([d - 1 for d in bond_feats], dtype=torch.long)
                         .reshape(1, -1)
                         .repeat(2 * num_nodes, 1)
                     )
+                    new_value = value.new_full(size, fill_value)
                     data[key] = torch.cat([value, new_value], dim=dim)
-                elif fill_value is not None:
+                if fill_value is not None:
                     new_value = value.new_full(size, fill_value)
                     data[key] = torch.cat([value, new_value], dim=dim)
 
@@ -379,13 +387,8 @@ class VirtualNodeMol(BaseTransform):
         data.edge_type = edge_type
 
         if "num_nodes" in data:
-            data.num_nodes = old_data.num_nodes + 1
+            data.num_nodes = num_nodes + 1
 
-        # Set node feature of virtual node to all zeros
-        # data.x = torch.cat([data.x, torch.zeros(1, data.x.size(1))], dim=0)
-        # data.x = torch.cat(
-        #     [data.x, torch.tensor([d - 1 for d in atom_feats]).reshape(1, -1)], dim=0
-        # )
         data.x[-1] = torch.tensor([d - 1 for d in atom_feats])
 
         return data
