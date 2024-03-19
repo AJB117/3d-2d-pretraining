@@ -19,6 +19,9 @@ parser.add_argument(
     default="GIN",
     choices=[
         "GIN",
+        "GAT",
+        "GCN",
+        "GraphSAGE"
     ],
 )
 
@@ -226,6 +229,8 @@ parser.add_argument(
     default="cat",
     help="how to pool the final embeddings + interaction emeddings",
 )
+parser.add_argument("--residual", action="store_true", help="add residual connections")
+parser.add_argument("--layer_norm", action="store_true", help="use layer norm over batch norm")
 
 args = parser.parse_args()
 print("arguments\t", args)
