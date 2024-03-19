@@ -74,6 +74,18 @@ def split(dataset, data_root):
 
 
 def model_setup():
+    if args.mode !=  "method":
+        model = SchNet(
+            hidden_channels=args.emb_dim,
+            num_filters=args.SchNet_num_filters,
+            num_interactions=args.SchNet_num_interactions,
+            num_gaussians=args.SchNet_num_gaussians,
+            cutoff=args.SchNet_cutoff,
+            readout=args.SchNet_readout,
+            node_class=node_class,
+        )
+        graph_pred_linear = torch.nn.Linear(intermediate_dim, num_tasks)
+        return model, graph_pred_linear
     model = Interactor(
         args,
         num_interaction_blocks=6,
@@ -82,7 +94,9 @@ def model_setup():
         device=device,
         num_node_class=119 + 1,  # + 1 for virtual node
         residual=args.residual,
-        gnn_2d_type=args.model_2d
+        model_2d=args.model_2d,
+        model_3d=args.model_3d,
+        dropout=args.dropout_ratio
     )
     if args.final_pool == "cat":
         graph_pred_mlp = nn.Sequential(
@@ -98,6 +112,9 @@ def model_setup():
             nn.ReLU(),
             nn.Linear(intermediate_dim, num_tasks), 
         )
+    for layer in graph_pred_mlp:
+        if isinstance(layer, nn.Linear):
+            nn.init.xavier_uniform_(layer.weight)
 
     return (
         model,
@@ -150,8 +167,8 @@ def save_model(save_best):
 
     saved_model_dict["model"] = model.state_dict()
 
-    if graph_pred_linear is not None:
-        saved_model_dict["graph_pred_linear"] = graph_pred_linear.state_dict()
+    if graph_pred_mlp is not None:
+        saved_model_dict["graph_pred_linear"] = graph_pred_mlp.state_dict()
 
     torch.save(saved_model_dict, output_model_path)
 
@@ -161,8 +178,8 @@ def save_model(save_best):
 def train(epoch, device, loader, optimizer):
     model.train()
 
-    if graph_pred_linear is not None:
-        graph_pred_linear.train()
+    if graph_pred_mlp is not None:
+        graph_pred_mlp.train()
 
     loss_acc = 0
     num_iters = len(loader)
@@ -174,10 +191,14 @@ def train(epoch, device, loader, optimizer):
     for step, batch in enumerate(L):
         batch = batch.to(device)
 
-        interact_rep = model(
-            batch.x, batch.edge_index, batch.edge_attr, batch.positions, batch.batch
-        )
-        pred = graph_pred_linear(interact_rep).squeeze()
+        if args.mode != "method":
+            molecule_rep = model(batch.x, batch.positions, batch=batch.batch)
+            pred = graph_pred_mlp(molecule_rep).squeeze()
+        else:
+            interact_rep = model(
+                batch.x, batch.edge_index, batch.edge_attr, batch.positions, batch.batch
+            )
+            pred = graph_pred_mlp(interact_rep).squeeze()
 
         B = pred.size()[0]
         y = batch.y.view(B, -1)[:, task_id]
@@ -218,10 +239,15 @@ def eval(device, loader):
     for batch in L:
         batch = batch.to(device)
 
-        interact_rep = model(
-            batch.x, batch.edge_index, batch.edge_attr, batch.positions, batch.batch
-        )
-        pred = graph_pred_linear(interact_rep).squeeze()
+        if args.mode != "method":
+            molecule_rep = model(batch.x, batch.positions, batch=batch.batch)
+            pred = graph_pred_mlp(molecule_rep).squeeze()
+        else:
+            interact_rep = model(
+                batch.x, batch.edge_index, batch.edge_attr, batch.positions, batch.batch
+            )
+            pred = graph_pred_mlp(interact_rep).squeeze()
+
 
         B = pred.size()[0]
         y = batch.y.view(B, -1)[:, task_id]
@@ -257,7 +283,7 @@ if __name__ == "__main__":
     num_tasks = 1
     assert args.dataset == "QM9"
 
-    transform = VirtualNodeMol()
+    transform = VirtualNodeMol() if args.interaction_rep_3d in ("com", "const_radius") else None
     data_root = "data/molecule_datasets/{}".format(args.dataset)
     dataset = MoleculeDatasetQM9(
         data_root,
@@ -324,12 +350,12 @@ if __name__ == "__main__":
         intermediate_dim = args.emb_dim
 
     node_class, edge_class = 120, 5
-    (model, graph_pred_linear) = model_setup()
+    (model, graph_pred_mlp) = model_setup()
 
     if args.input_model_file != "":
         load_model(
             model,
-            graph_pred_linear,
+            graph_pred_mlp,
             args.input_model_file,
         )
     else:
@@ -337,14 +363,14 @@ if __name__ == "__main__":
 
     model = model.to(device)
 
-    if graph_pred_linear is not None:
-        graph_pred_linear.to(device)
+    if graph_pred_mlp is not None:
+        graph_pred_mlp.to(device)
 
     model_param_group = [{"params": model.parameters(), "lr": args.lr}]
 
-    if graph_pred_linear is not None:
+    if graph_pred_mlp is not None:
         model_param_group.append(
-            {"params": graph_pred_linear.parameters(), "lr": args.lr}
+            {"params": graph_pred_mlp.parameters(), "lr": args.lr}
         )
     optimizer = optim.Adam(model_param_group, lr=args.lr, weight_decay=args.decay)
 
