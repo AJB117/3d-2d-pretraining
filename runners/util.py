@@ -14,6 +14,8 @@ import copy
 
 from torch import Tensor
 
+import ase
+from torch_scatter import scatter
 from torch_geometric.data import Data
 from torch_geometric.data.datapipes import functional_transform
 from torch_geometric.transforms import BaseTransform
@@ -331,6 +333,8 @@ class VirtualNodeMol(BaseTransform):
         assert num_nodes is not None
         edge_type = data.get("edge_type", torch.zeros_like(row))
 
+        atomic_mass = torch.from_numpy(ase.data.atomic_masses)
+
         atom_feats = get_atom_feature_dims()
         bond_feats = get_bond_feature_dims()
 
@@ -388,6 +392,11 @@ class VirtualNodeMol(BaseTransform):
 
         if "num_nodes" in data:
             data.num_nodes = num_nodes + 1
+
+        # Add the center of mass as the position of the virtual node
+        masses = atomic_mass[data.x[:-1, 0]].reshape(-1, 1)
+        c = (masses * data.positions[:-1]).sum(dim=0) / masses.sum()
+        data.positions[-1] = c
 
         data.x[-1] = torch.tensor([d - 1 for d in atom_feats])
 
