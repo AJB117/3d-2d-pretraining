@@ -56,7 +56,7 @@ parser.add_argument(
 parser.add_argument("--MD17_train_batch_size", type=int, default=1)
 parser.add_argument("--batch_size", type=int, default=128)
 parser.add_argument("--epochs", type=int, default=100)
-parser.add_argument("--lr", type=float, default=1e-4)
+parser.add_argument("--lr", type=float, default=5e-5)
 parser.add_argument("--lr_scale", type=float, default=1)
 parser.add_argument("--decay", type=float, default=0)
 parser.add_argument("--print_every_epoch", type=int, default=1)
@@ -93,7 +93,7 @@ parser.add_argument("--SchNet_gamma", type=float, default=None)
 parser.add_argument("--gnn_type", type=str, default="GIN")
 parser.add_argument("--num_layer", type=int, default=5)
 parser.add_argument("--emb_dim", type=int, default=300)
-parser.add_argument("--dropout_ratio", type=float, default=0.5)
+parser.add_argument("--dropout_ratio", type=float, default=0.0)
 parser.add_argument("--graph_pooling", type=str, default="mean")
 parser.add_argument("--JK", type=str, default="last")
 parser.add_argument("--gnn_2d_lr_scale", type=float, default=1)
@@ -159,7 +159,7 @@ parser.add_argument(
     type=str,
     help="path of pretraining checkpoint to load",
 )
-parser.add_argument("--mode", type=str, default="MoleculeSDE", help="baseline to use")
+parser.add_argument("--mode", type=str, default="method", help="baseline to use")
 parser.add_argument(
     "--use_generated_dataset", dest="use_generated_dataset", action="store_true"
 )
@@ -202,7 +202,7 @@ parser.add_argument(
 parser.add_argument(
     "--interaction_rep_2d",
     type=str,
-    default="mean",
+    default="vnode",
     choices=["sum", "mean", "vnode"],
     help="how to represent the interaction for 2D GNN",
 )
@@ -210,8 +210,8 @@ parser.add_argument(
     "--interaction_rep_3d",
     type=str,
     default="com",
-    choices=["sum", "mean", "com", "const_radius"],
-    help="how to represent the interaction for 3D GNN, com: center of mass, const_radius: hardcoded constant radius",
+    choices=["sum", "mean", "com", "const_radius", ""],
+    help="how to represent the interaction for 3D GNN, com: center of mass, const_radius: hardcoded constant radius. Use '' for baseline 3D models to avoid generating extra 3d coords",
 )
 parser.add_argument(
     "--interaction_agg",
