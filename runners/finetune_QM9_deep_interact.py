@@ -20,6 +20,7 @@ from Geom3D.datasets import (
     GeneratedMoleculeDatasetQM9,
 )
 from splitters import QM9_random_customized_01, QM9_random_customized_02, QM9_50k_split
+from util import VirtualNodeMol
 
 
 def mean_absolute_error(pred, target):
@@ -79,8 +80,12 @@ def model_setup():
         final_pool=args.final_pool,
         emb_dim=args.emb_dim,
         device=device,
+        num_node_class=119 + 1,  # + 1 for virtual node
     )
-    graph_pred_linear = torch.nn.Linear(intermediate_dim, num_tasks)
+    if args.final_pool == "cat":
+        graph_pred_linear = torch.nn.Linear(intermediate_dim * 2, num_tasks)
+    else:
+        graph_pred_linear = torch.nn.Linear(intermediate_dim, num_tasks)
 
     return (
         model,
@@ -239,12 +244,15 @@ if __name__ == "__main__":
 
     num_tasks = 1
     assert args.dataset == "QM9"
+
+    transform = VirtualNodeMol()
     data_root = "data/molecule_datasets/{}".format(args.dataset)
     dataset = MoleculeDatasetQM9(
         data_root,
         dataset=args.dataset,
         task=args.task,
         rotation_transform=rotation_transform,
+        transform=transform,
     )
     task_id = dataset.task_id
 

@@ -17,7 +17,7 @@ from torch_scatter import scatter_add
 from .encoders import AtomEncoder
 from typing import List
 from .molecule_gnn_model import GINConv, GATConv, GCNConv, GraphSAGEConv
-from .schnet import InteractionBlock
+from .schnet import InteractionBlock, GaussianSmearing
 from torch_scatter import scatter
 import ase
 
@@ -45,6 +45,8 @@ class Interactor(nn.Module):
         self.model_2d = args.model_2d
         self.model_3d = args.model_3d
 
+        self.emb_dim = emb_dim
+
         self.atom_encoder_2d = AtomEncoder(emb_dim=emb_dim)
         self.atom_encoder_3d = None
 
@@ -57,10 +59,10 @@ class Interactor(nn.Module):
         )
 
         if model_3d == "SchNet":
-            block_3d = SchNetBlock
+            block_3d = SchNetBlock(hidden_channels=emb_dim)
 
         self.blocks_3d = nn.ModuleList(
-            [block_3d() for _ in range(num_interaction_blocks)]
+            [block_3d for _ in range(num_interaction_blocks)]
         )
 
         self.bn_2d = nn.ModuleList(
@@ -80,7 +82,7 @@ class Interactor(nn.Module):
                 nn.ReLU(),
                 nn.Linear(twice_dim, twice_dim),
             )
-        elif interaction_agg in ("sum", "add"):
+        elif interaction_agg in ("sum", "mean"):
             interactor = nn.Sequential(
                 nn.Linear(args.emb_dim, twice_dim),
                 nn.BatchNorm1d(twice_dim),
@@ -114,23 +116,26 @@ class Interactor(nn.Module):
         x_2d = self.atom_encoder_2d(x)
         prev_2d = x_2d
 
+        # find the virtual nodes out of the batch
+        num_nodes_per_graph = scatter_add(
+            torch.ones_like(positions[:, 0]), batch, dim=0
+        ).type(torch.long)
+        cum_indices_per_graph = torch.cumsum(num_nodes_per_graph, dim=0).type(
+            torch.long
+        )
+
+        virt_mask = torch.zeros_like(positions[:, 0], dtype=torch.bool)
+        virt_mask[cum_indices_per_graph - 1] = True
+
         if self.model_3d == "SchNet":
+            x_3d = x
             if x.dim() != 1:
-                x = x[
-                    :, 0
-                ]  # avoid rebuilding the dataset when use_pure_atomic_num is False
-            assert x.dim() == 1 and x.dtype == torch.long
+                x_3d = x[:, 0]
+
+            assert x_3d.dim() == 1 and x_3d.dtype == torch.long
             batch = torch.zeros_like(x) if batch is None else batch
 
-            if self.args.interaction_rep_3d == "com":
-                mass = self.atomic_mass[x[:-1]].view(-1, 1)
-                c = scatter(mass * positions[:-1], batch[:-1], dim=0) / scatter(
-                    mass, batch[:-1], dim=0
-                )
-                pdb.set_trace()
-                positions[-1] = c
-
-            x_3d = self.atom_encoder_3d(x)
+            x_3d = self.atom_encoder_3d(x_3d)
 
         prev_3d = x_3d
 
@@ -150,9 +155,8 @@ class Interactor(nn.Module):
             if self.residual:
                 x_3d = x_3d + prev_3d
 
-            num_nodes_per_batch = scatter_add(torch.ones_like(x_2d[:, 0]), batch, dim=0)
-            virt_emb_2d = x_2d[num_nodes_per_batch - 1]
-            virt_emb_3d = x_3d[num_nodes_per_batch - 1]
+            virt_emb_2d = x_2d[virt_mask]
+            virt_emb_3d = x_3d[virt_mask]
 
             if self.interaction_agg == "cat":
                 interaction = torch.cat([virt_emb_2d, virt_emb_3d], dim=-1)
@@ -164,8 +168,8 @@ class Interactor(nn.Module):
             interaction = self.interactor(interaction)
             virt_emb_2d, virt_emb_3d = torch.split(interaction, self.emb_dim, dim=-1)
 
-            x_2d[num_nodes_per_batch - 1] = virt_emb_2d
-            x_3d[num_nodes_per_batch - 1] = virt_emb_3d
+            x_2d[virt_mask] = virt_emb_2d
+            x_3d[virt_mask] = virt_emb_3d
 
         if self.final_pool == "attention":
             pass  #! TODO
@@ -222,28 +226,12 @@ class SchNetBlock(nn.Module):
         self.num_interactions = num_interactions
         self.num_gaussians = num_gaussians
         self.cutoff = cutoff
-
+        self.distance_expansion = GaussianSmearing(0.0, cutoff, num_gaussians)
         self.interaction = InteractionBlock(
             hidden_channels, num_gaussians, num_filters, cutoff
         )
 
-    def forward(self, z, pos, batch=None, interaction_rep="com"):
-        if z.dim() != 1:
-            z = z[
-                :, 0
-            ]  # avoid rebuilding the dataset when use_pure_atomic_num is False
-        assert z.dim() == 1 and z.dtype == torch.long
-        batch = torch.zeros_like(z) if batch is None else batch
-
-        if interaction_rep == "com":
-            mass = self.atomic_mass[z[:-1]].view(-1, 1)
-            c = scatter(mass * pos[:-1], batch[:-1], dim=0) / scatter(
-                mass, batch[:-1], dim=0
-            )
-            pos[-1] = c
-
-        h = self.embedding(z)
-
+    def forward(self, h, pos, batch=None):
         edge_index = radius_graph(pos, r=self.cutoff, batch=batch)
         row, col = edge_index
         edge_weight = (pos[row] - pos[col]).norm(dim=-1)
