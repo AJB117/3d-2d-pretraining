@@ -91,13 +91,6 @@ class SchNet(torch.nn.Module):
         assert z.dim() == 1 and z.dtype == torch.long
         batch = torch.zeros_like(z) if batch is None else batch
 
-        if interaction_rep == "com":
-            mass = self.atomic_mass[z[:-1]].view(-1, 1)
-            c = scatter(mass * pos[:-1], batch[:-1], dim=0) / scatter(
-                mass, batch[:-1], dim=0
-            )
-            pos[-1] = c
-
         h = self.embedding(z)
 
         edge_index = radius_graph(pos, r=self.cutoff, batch=batch)
