@@ -29,7 +29,7 @@ class Interactor(nn.Module):
         num_interaction_blocks,
         final_pool,
         emb_dim,
-        gnn_2d_type="GIN",
+        model_2d="GIN",
         model_3d="SchNet",
         residual=True,
         interaction_agg="cat",
@@ -39,6 +39,7 @@ class Interactor(nn.Module):
         device="cpu",
         bnorm=True,
         lnorm=False,
+        dropout=0.0
     ):
         super(Interactor, self).__init__()
         self.args = args
@@ -51,6 +52,7 @@ class Interactor(nn.Module):
         self.model_2d = args.model_2d
         self.model_3d = args.model_3d
 
+        self.dropout = dropout
         self.emb_dim = emb_dim
 
         self.atom_encoder_2d = AtomEncoder(emb_dim=emb_dim)
@@ -61,7 +63,7 @@ class Interactor(nn.Module):
             self.atomic_mass = torch.from_numpy(ase.data.atomic_masses).to(device)
 
         self.blocks_2d = nn.ModuleList(
-            [Block2D(args, gnn_2d_type) for _ in range(num_interaction_blocks)]
+            [Block2D(args, model_2d) for _ in range(num_interaction_blocks)]
         )
 
         if model_3d == "SchNet":
@@ -84,6 +86,9 @@ class Interactor(nn.Module):
         self.norm_3d = nn.ModuleList(
             [normalizer for _ in range(num_interaction_blocks)]
         )
+        self.dropouts = nn.ModuleList(
+            [nn.Dropout(dropout) for _ in range(num_interaction_blocks)]
+        )
 
         self.final_pool = final_pool
 
@@ -91,6 +96,7 @@ class Interactor(nn.Module):
         if interaction_agg == "cat":
             interactor = nn.Sequential(
                 nn.Linear(twice_dim, twice_dim),
+                nn.Dropout(dropout),
                 nn.BatchNorm1d(twice_dim),
                 nn.ReLU(),
                 nn.Linear(twice_dim, twice_dim),
@@ -98,10 +104,17 @@ class Interactor(nn.Module):
         elif interaction_agg in ("sum", "mean"):
             interactor = nn.Sequential(
                 nn.Linear(args.emb_dim, twice_dim),
+                nn.Dropout(dropout),
                 nn.BatchNorm1d(twice_dim),
                 nn.ReLU(),
                 nn.Linear(twice_dim, twice_dim),
             )
+        
+        # use xavier initialization for the interactor
+        for layer in interactor:
+            if isinstance(layer, nn.Linear):
+                nn.init.xavier_uniform_(layer.weight)
+                nn.init.zeros_(layer.bias)
 
         self.interactor = interactor
 
@@ -154,16 +167,18 @@ class Interactor(nn.Module):
 
         for i in range(self.num_interaction_blocks):
             x_2d = self.blocks_2d[i](x_2d, edge_index, edge_attr)
-            x_2d = F.relu(x_2d)
+            x_2d = self.dropouts[i](x_2d)
             x_2d = self.norm_2d[i](x_2d)
+            x_2d = F.relu(x_2d)
 
             if self.residual:
                 x_2d = x_2d + prev_2d
 
             if self.model_3d == "SchNet":
                 x_3d = self.blocks_3d[i](x_3d, positions, batch)
-            x_3d = F.relu(x_3d)
+            x_3d = self.dropouts[i](x_3d)
             x_3d = self.norm_3d[i](x_3d)
+            x_3d = F.relu(x_3d)
 
             if self.residual:
                 x_3d = x_3d + prev_3d
@@ -184,6 +199,9 @@ class Interactor(nn.Module):
             x_2d[virt_mask] = virt_emb_2d
             x_3d[virt_mask] = virt_emb_3d
 
+            prev_2d = x_2d
+            prev_3d = x_3d
+
         if self.interaction_rep_2d == "vnode":
             rep_2d = x_2d[virt_mask]
         elif self.interaction_rep_2d == "mean":
@@ -194,7 +212,7 @@ class Interactor(nn.Module):
         if self.interaction_rep_3d in ("com", "const_radius"):
             rep_3d = x_3d[virt_mask]
         elif self.interaction_rep_3d == "mean":
-            rep_3d = x_3d.mean(dim=0, keepdim=True)
+            rep_3d = x_3d[~virt_mask].mean(dim=0, keepdim=True)
         elif self.interaction_rep_3d == "sum":
             rep_3d = x_3d.sum(dim=0, keepdim=True)
 
@@ -209,7 +227,7 @@ class Interactor(nn.Module):
         else:
             raise ValueError("Invalid final pooling method")
 
-        x = self.interactor(x)
+        # x = self.interactor(x)
 
         return x
 
