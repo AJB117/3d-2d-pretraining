@@ -33,15 +33,21 @@ class Interactor(nn.Module):
         model_3d="SchNet",
         residual=True,
         interaction_agg="cat",
+        interaction_rep_2d="vnode",
+        interaction_rep_3d="com",
         num_node_class=119,
         device="cpu",
+        bnorm=True,
+        lnorm=False,
     ):
         super(Interactor, self).__init__()
         self.args = args
-        self.atom_encoder = AtomEncoder(emb_dim=emb_dim)
         self.num_interaction_blocks = num_interaction_blocks
         self.residual = residual
         self.interaction_agg = interaction_agg
+        self.interaction_rep_2d = interaction_rep_2d
+        self.interaction_rep_3d = interaction_rep_3d
+
         self.model_2d = args.model_2d
         self.model_3d = args.model_3d
 
@@ -65,11 +71,18 @@ class Interactor(nn.Module):
             [block_3d for _ in range(num_interaction_blocks)]
         )
 
-        self.bn_2d = nn.ModuleList(
-            [nn.BatchNorm1d(emb_dim) for _ in range(num_interaction_blocks)]
+        if lnorm:
+            normalizer = nn.LayerNorm(emb_dim)
+        elif bnorm:
+            normalizer = nn.BatchNorm1d(emb_dim)
+        else:
+            normalizer = nn.Identity()
+
+        self.norm_2d = nn.ModuleList(
+            [normalizer for _ in range(num_interaction_blocks)]
         )
-        self.bn_3d = nn.ModuleList(
-            [nn.BatchNorm1d(emb_dim) for _ in range(num_interaction_blocks)]
+        self.norm_3d = nn.ModuleList(
+            [normalizer for _ in range(num_interaction_blocks)]
         )
 
         self.final_pool = final_pool
@@ -142,7 +155,7 @@ class Interactor(nn.Module):
         for i in range(self.num_interaction_blocks):
             x_2d = self.blocks_2d[i](x_2d, edge_index, edge_attr)
             x_2d = F.relu(x_2d)
-            x_2d = self.bn_2d[i](x_2d)
+            x_2d = self.norm_2d[i](x_2d)
 
             if self.residual:
                 x_2d = x_2d + prev_2d
@@ -150,7 +163,7 @@ class Interactor(nn.Module):
             if self.model_3d == "SchNet":
                 x_3d = self.blocks_3d[i](x_3d, positions, batch)
             x_3d = F.relu(x_3d)
-            x_3d = self.bn_3d[i](x_3d)
+            x_3d = self.norm_3d[i](x_3d)
 
             if self.residual:
                 x_3d = x_3d + prev_3d
@@ -171,12 +184,28 @@ class Interactor(nn.Module):
             x_2d[virt_mask] = virt_emb_2d
             x_3d[virt_mask] = virt_emb_3d
 
+        if self.interaction_rep_2d == "vnode":
+            rep_2d = x_2d[virt_mask]
+        elif self.interaction_rep_2d == "mean":
+            rep_2d = x_2d.mean(dim=0, keepdim=True)
+        elif self.interaction_rep_2d == "sum":
+            rep_2d = x_2d.sum(dim=0, keepdim=True)
+        
+        if self.interaction_rep_3d in ("com", "const_radius"):
+            rep_3d = x_3d[virt_mask]
+        elif self.interaction_rep_3d == "mean":
+            rep_3d = x_3d.mean(dim=0, keepdim=True)
+        elif self.interaction_rep_3d == "sum":
+            rep_3d = x_3d.sum(dim=0, keepdim=True)
+
         if self.final_pool == "attention":
             pass  #! TODO
         elif self.final_pool == "cat":
-            x = torch.cat([virt_emb_2d, virt_emb_3d], dim=-1)
+            x = torch.cat([rep_2d, rep_3d], dim=-1)
         elif self.final_pool == "mean":
-            x = (virt_emb_2d + virt_emb_3d) / 2
+            x = (rep_2d + rep_3d) / 2
+        elif self.final_pool == "sum":
+            x = rep_2d + rep_3d
         else:
             raise ValueError("Invalid final pooling method")
 
