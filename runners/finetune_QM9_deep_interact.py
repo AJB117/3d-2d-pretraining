@@ -81,15 +81,27 @@ def model_setup():
         emb_dim=args.emb_dim,
         device=device,
         num_node_class=119 + 1,  # + 1 for virtual node
+        residual=args.residual,
+        gnn_2d_type=args.model_2d
     )
     if args.final_pool == "cat":
-        graph_pred_linear = torch.nn.Linear(intermediate_dim * 2, num_tasks)
+        graph_pred_mlp = nn.Sequential(
+            nn.Linear(intermediate_dim * 2, intermediate_dim),
+            nn.BatchNorm1d(intermediate_dim),
+            nn.ReLU(),
+            nn.Linear(intermediate_dim, num_tasks), 
+        )
     else:
-        graph_pred_linear = torch.nn.Linear(intermediate_dim, num_tasks)
+        graph_pred_mlp = nn.Sequential(
+            nn.Linear(intermediate_dim, intermediate_dim),
+            nn.BatchNorm1d(intermediate_dim),
+            nn.ReLU(),
+            nn.Linear(intermediate_dim, num_tasks), 
+        )
 
     return (
         model,
-        graph_pred_linear,
+        graph_pred_mlp,
     )
 
 
@@ -253,6 +265,7 @@ if __name__ == "__main__":
         task=args.task,
         rotation_transform=rotation_transform,
         transform=transform,
+        use_pure_atomic_num=False
     )
     task_id = dataset.task_id
 
