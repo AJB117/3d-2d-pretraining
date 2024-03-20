@@ -17,12 +17,7 @@ parser.add_argument(
     "--model_2d",
     type=str,
     default="GIN",
-    choices=[
-        "GIN",
-        "GAT",
-        "GCN",
-        "GraphSAGE"
-    ],
+    choices=["GIN", "GAT", "GCN", "GraphSAGE"],
 )
 
 # about dataset and dataloader
@@ -230,7 +225,12 @@ parser.add_argument(
     help="how to pool the final embeddings + interaction emeddings",
 )
 parser.add_argument("--residual", action="store_true", help="add residual connections")
-parser.add_argument("--layer_norm", action="store_true", help="use layer norm over batch norm")
+parser.add_argument(
+    "--layer_norm", action="store_true", help="use layer norm over batch norm"
+)
+parser.add_argument(
+    "--batch_norm", action="store_true", help="use batch norm over layer norm"
+)
 
 args = parser.parse_args()
 print("arguments\t", args)

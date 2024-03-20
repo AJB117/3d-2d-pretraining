@@ -1,3 +1,4 @@
+import warnings
 import csv
 import pdb
 import os
@@ -21,6 +22,8 @@ from Geom3D.datasets import (
 )
 from splitters import QM9_random_customized_01, QM9_random_customized_02, QM9_50k_split
 from util import VirtualNodeMol
+
+warnings.filterwarnings("ignore")
 
 
 def mean_absolute_error(pred, target):
@@ -74,7 +77,7 @@ def split(dataset, data_root):
 
 
 def model_setup():
-    if args.mode !=  "method":
+    if args.mode != "method":
         model = SchNet(
             hidden_channels=args.emb_dim,
             num_filters=args.SchNet_num_filters,
@@ -88,30 +91,44 @@ def model_setup():
         return model, graph_pred_linear
     model = Interactor(
         args,
-        num_interaction_blocks=6,
+        num_interaction_blocks=args.num_interaction_blocks,
         final_pool=args.final_pool,
         emb_dim=args.emb_dim,
         device=device,
         num_node_class=119 + 1,  # + 1 for virtual node
+        interaction_rep_2d=args.interaction_rep_2d,
+        interaction_rep_3d=args.interaction_rep_3d,
         residual=args.residual,
         model_2d=args.model_2d,
         model_3d=args.model_3d,
-        dropout=args.dropout_ratio
+        dropout=args.dropout_ratio,
+        batch_norm=args.batch_norm,
+        layer_norm=args.layer_norm,
     )
+
+    normalizer = None
+    if args.batch_norm:
+        normalizer = nn.BatchNorm1d(intermediate_dim)
+    elif args.layer_norm:
+        normalizer = nn.LayerNorm(intermediate_dim)
+    else:
+        normalizer = nn.Identity()
+
     if args.final_pool == "cat":
         graph_pred_mlp = nn.Sequential(
             nn.Linear(intermediate_dim * 2, intermediate_dim),
-            nn.BatchNorm1d(intermediate_dim),
+            normalizer,
             nn.ReLU(),
-            nn.Linear(intermediate_dim, num_tasks), 
+            nn.Linear(intermediate_dim, num_tasks),
         )
     else:
         graph_pred_mlp = nn.Sequential(
             nn.Linear(intermediate_dim, intermediate_dim),
-            nn.BatchNorm1d(intermediate_dim),
+            normalizer,
             nn.ReLU(),
-            nn.Linear(intermediate_dim, num_tasks), 
+            nn.Linear(intermediate_dim, num_tasks),
         )
+
     for layer in graph_pred_mlp:
         if isinstance(layer, nn.Linear):
             nn.init.xavier_uniform_(layer.weight)
@@ -182,6 +199,7 @@ def train(epoch, device, loader, optimizer):
         graph_pred_mlp.train()
 
     loss_acc = 0
+    y_true, y_scores = [], []
     num_iters = len(loader)
 
     if args.verbose:
@@ -204,14 +222,22 @@ def train(epoch, device, loader, optimizer):
         y = batch.y.view(B, -1)[:, task_id]
 
         # normalize
-        y = (y - TRAIN_mean) / TRAIN_std
+        normalized_y = (y - TRAIN_mean) / TRAIN_std
 
-        loss = criterion(pred, y)
+        loss = criterion(pred, normalized_y)
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         loss_acc += loss.cpu().detach().item()
+
+        pred_denorm = (pred.detach() * TRAIN_std + TRAIN_mean) * loader.dataset.eV2meV[
+            task_id
+        ]
+        mev_y = y * loader.dataset.eV2meV[task_id]
+
+        y_true.append(mev_y)
+        y_scores.append(pred_denorm)
 
         if args.lr_scheduler in ["CosineAnnealingWarmRestarts"]:
             lr_scheduler.step(epoch - 1 + step / num_iters)
@@ -222,7 +248,12 @@ def train(epoch, device, loader, optimizer):
     elif args.lr_scheduler in ["ReduceLROnPlateau"]:
         lr_scheduler.step(loss_acc)
 
-    return loss_acc
+    y_true = torch.cat(y_true, dim=0).cpu().numpy()
+    y_scores = torch.cat(y_scores, dim=0).cpu().numpy()
+
+    mae = mean_absolute_error(y_scores, y_true)
+
+    return loss_acc, mae
 
 
 @torch.no_grad()
@@ -247,7 +278,6 @@ def eval(device, loader):
                 batch.x, batch.edge_index, batch.edge_attr, batch.positions, batch.batch
             )
             pred = graph_pred_mlp(interact_rep).squeeze()
-
 
         B = pred.size()[0]
         y = batch.y.view(B, -1)[:, task_id]
@@ -283,7 +313,9 @@ if __name__ == "__main__":
     num_tasks = 1
     assert args.dataset == "QM9"
 
-    transform = VirtualNodeMol() if args.interaction_rep_3d in ("com", "const_radius") else None
+    transform = (
+        VirtualNodeMol() if args.interaction_rep_3d in ("com", "const_radius") else None
+    )
     data_root = "data/molecule_datasets/{}".format(args.dataset)
     dataset = MoleculeDatasetQM9(
         data_root,
@@ -291,7 +323,7 @@ if __name__ == "__main__":
         task=args.task,
         rotation_transform=rotation_transform,
         transform=transform,
-        use_pure_atomic_num=False
+        use_pure_atomic_num=False,
     )
     task_id = dataset.task_id
 
@@ -369,9 +401,7 @@ if __name__ == "__main__":
     model_param_group = [{"params": model.parameters(), "lr": args.lr}]
 
     if graph_pred_mlp is not None:
-        model_param_group.append(
-            {"params": graph_pred_mlp.parameters(), "lr": args.lr}
-        )
+        model_param_group.append({"params": graph_pred_mlp.parameters(), "lr": args.lr})
     optimizer = optim.Adam(model_param_group, lr=args.lr, weight_decay=args.decay)
 
     # set up optimizer
@@ -411,9 +441,10 @@ if __name__ == "__main__":
 
     train_mae_list, val_mae_list, test_mae_list = [], [], []
     best_val_mae, best_val_idx = 1e10, 0
+
     for epoch in range(1, args.epochs + 1):
         start_time = time.time()
-        loss_acc = train(epoch, device, train_loader, optimizer)
+        loss_acc, loss_mae = train(epoch, device, train_loader, optimizer)
         print("Epoch: {}\nLoss: {}".format(epoch, loss_acc))
 
         if epoch % args.print_every_epoch == 0:
@@ -424,12 +455,12 @@ if __name__ == "__main__":
             val_mae, val_target, val_pred = eval(device, val_loader)
             test_mae, test_target, test_pred = eval(device, test_loader)
 
-            train_mae_list.append(train_mae)
+            train_mae_list.append(loss_mae)
             val_mae_list.append(val_mae)
             test_mae_list.append(test_mae)
             print(
                 "train: {:.6f}\tval: {:.6f}\ttest: {:.6f}".format(
-                    train_mae, val_mae, test_mae
+                    loss_mae, val_mae, test_mae
                 )
             )
 

@@ -17,9 +17,52 @@ from torch_scatter import scatter_add
 from .encoders import AtomEncoder
 from typing import List
 from .molecule_gnn_model import GINConv, GATConv, GCNConv, GraphSAGEConv
-from .schnet import InteractionBlock, GaussianSmearing
+from .schnet import InteractionBlock, GaussianSmearing, ShiftedSoftplus
 from torch_scatter import scatter
 import ase
+
+
+class InteractionMLP(nn.Module):
+    def __init__(
+        self,
+        emb_dim,
+        dropout=0.0,
+        num_layers=2,
+        interaction_agg="cat",
+        normalizer=nn.Identity,
+    ):
+        super(InteractionMLP, self).__init__()
+        self.emb_dim = emb_dim
+        self.dropout = dropout
+        self.num_layers = num_layers
+        self.interaction_agg = interaction_agg
+
+        layers = []
+        emb_dim = emb_dim * 2 if interaction_agg == "cat" else emb_dim
+        for _ in range(num_layers):
+            layers.append(nn.Linear(emb_dim, emb_dim))
+            layers.append(nn.Dropout(dropout))
+            layers.append(normalizer(emb_dim))
+            layers.append(nn.ReLU())
+
+        self.layers = nn.Sequential(*layers)
+
+        for layer in self.layers:
+            if isinstance(layer, nn.Linear):
+                nn.init.xavier_uniform_(layer.weight)
+                nn.init.zeros_(layer.bias)
+
+    def forward(self, rep_2d, rep_3d):
+        if self.interaction_agg == "cat":
+            x = torch.cat([rep_2d, rep_3d], dim=-1)
+        elif self.interaction_agg == "sum":
+            x = rep_2d + rep_3d
+        elif self.interaction_agg == "mean":
+            x = (rep_2d + rep_3d) / 2
+        else:
+            raise ValueError("Invalid interaction aggregation method")
+
+        return self.layers(x)
 
 
 class Interactor(nn.Module):
@@ -37,9 +80,9 @@ class Interactor(nn.Module):
         interaction_rep_3d="com",
         num_node_class=119,
         device="cpu",
-        bnorm=True,
-        lnorm=False,
-        dropout=0.0
+        batch_norm=True,
+        layer_norm=False,
+        dropout=0.0,
     ):
         super(Interactor, self).__init__()
         self.args = args
@@ -73,18 +116,18 @@ class Interactor(nn.Module):
             [block_3d for _ in range(num_interaction_blocks)]
         )
 
-        if lnorm:
-            normalizer = nn.LayerNorm(emb_dim)
-        elif bnorm:
-            normalizer = nn.BatchNorm1d(emb_dim)
+        if layer_norm:
+            normalizer = nn.LayerNorm
+        elif batch_norm:
+            normalizer = nn.BatchNorm1d
         else:
-            normalizer = nn.Identity()
+            normalizer = nn.Identity
 
         self.norm_2d = nn.ModuleList(
-            [normalizer for _ in range(num_interaction_blocks)]
+            [normalizer(emb_dim) for _ in range(num_interaction_blocks)]
         )
         self.norm_3d = nn.ModuleList(
-            [normalizer for _ in range(num_interaction_blocks)]
+            [normalizer(emb_dim) for _ in range(num_interaction_blocks)]
         )
         self.dropouts = nn.ModuleList(
             [nn.Dropout(dropout) for _ in range(num_interaction_blocks)]
@@ -92,29 +135,13 @@ class Interactor(nn.Module):
 
         self.final_pool = final_pool
 
-        twice_dim = args.emb_dim * 2
-        if interaction_agg == "cat":
-            interactor = nn.Sequential(
-                nn.Linear(twice_dim, twice_dim),
-                nn.Dropout(dropout),
-                nn.BatchNorm1d(twice_dim),
-                nn.ReLU(),
-                nn.Linear(twice_dim, twice_dim),
-            )
-        elif interaction_agg in ("sum", "mean"):
-            interactor = nn.Sequential(
-                nn.Linear(args.emb_dim, twice_dim),
-                nn.Dropout(dropout),
-                nn.BatchNorm1d(twice_dim),
-                nn.ReLU(),
-                nn.Linear(twice_dim, twice_dim),
-            )
-        
-        # use xavier initialization for the interactor
-        for layer in interactor:
-            if isinstance(layer, nn.Linear):
-                nn.init.xavier_uniform_(layer.weight)
-                nn.init.zeros_(layer.bias)
+        interactor = InteractionMLP(
+            emb_dim,
+            dropout=dropout,
+            num_layers=2,
+            interaction_agg=interaction_agg,
+            normalizer=normalizer,
+        )
 
         self.interactor = interactor
 
@@ -143,15 +170,15 @@ class Interactor(nn.Module):
         prev_2d = x_2d
 
         # find the virtual nodes out of the batch
-        num_nodes_per_graph = scatter_add(
-            torch.ones_like(positions[:, 0]), batch, dim=0
-        ).type(torch.long)
-        cum_indices_per_graph = torch.cumsum(num_nodes_per_graph, dim=0).type(
-            torch.long
-        )
+        # num_nodes_per_graph = scatter_add(
+        #     torch.ones_like(positions[:, 0]), batch, dim=0
+        # ).type(torch.long)
+        # cum_indices_per_graph = torch.cumsum(num_nodes_per_graph, dim=0).type(
+        #     torch.long
+        # )
 
-        virt_mask = torch.zeros_like(positions[:, 0], dtype=torch.bool)
-        virt_mask[cum_indices_per_graph - 1] = True
+        # virt_mask = torch.zeros_like(positions[:, 0], dtype=torch.bool)
+        # virt_mask[cum_indices_per_graph - 1] = True
 
         if self.model_3d == "SchNet":
             x_3d = x
@@ -169,7 +196,7 @@ class Interactor(nn.Module):
             x_2d = self.blocks_2d[i](x_2d, edge_index, edge_attr)
             x_2d = self.dropouts[i](x_2d)
             x_2d = self.norm_2d[i](x_2d)
-            x_2d = F.relu(x_2d)
+            # x_2d = F.relu(x_2d)
 
             if self.residual:
                 x_2d = x_2d + prev_2d
@@ -178,43 +205,57 @@ class Interactor(nn.Module):
                 x_3d = self.blocks_3d[i](x_3d, positions, batch)
             x_3d = self.dropouts[i](x_3d)
             x_3d = self.norm_3d[i](x_3d)
-            x_3d = F.relu(x_3d)
+            # x_3d = F.relu(x_3d)
 
             if self.residual:
                 x_3d = x_3d + prev_3d
 
-            virt_emb_2d = x_2d[virt_mask]
-            virt_emb_3d = x_3d[virt_mask]
+            # virt_emb_2d = x_2d[virt_mask]
+            # virt_emb_3d = x_3d[virt_mask]
 
-            if self.interaction_agg == "cat":
-                interaction = torch.cat([virt_emb_2d, virt_emb_3d], dim=-1)
-            elif self.interaction_agg == "sum":
-                interaction = virt_emb_2d + virt_emb_3d
-            elif self.interaction_agg == "mean":
-                interaction = (virt_emb_2d + virt_emb_3d) / 2
+            # if self.interaction_agg == "cat":
+            #     interaction = torch.cat([virt_emb_2d, virt_emb_3d], dim=-1)
+            # elif self.interaction_agg == "sum":
+            #     interaction = virt_emb_2d + virt_emb_3d
+            # elif self.interaction_agg == "mean":
+            #     interaction = (virt_emb_2d + virt_emb_3d) / 2
 
-            interaction = self.interactor(interaction)
-            virt_emb_2d, virt_emb_3d = torch.split(interaction, self.emb_dim, dim=-1)
-
-            x_2d[virt_mask] = virt_emb_2d
-            x_3d[virt_mask] = virt_emb_3d
+            # mean_2d = global_mean_pool(x_2d, batch)
+            # mean_3d = global_mean_pool(x_3d, batch)
 
             prev_2d = x_2d
             prev_3d = x_3d
 
+            # interaction = torch.cat([x_2d, x_3d], dim=-1)
+            interaction = self.interactor(x_2d, x_3d)
+
+            # virt_emb_2d, virt_emb_3d = torch.split(interaction, self.emb_dim, dim=-1)
+            x_2d, x_3d = torch.split(interaction, self.emb_dim, dim=-1)
+
+            # x_2d[virt_mask] = virt_emb_2d
+            # x_3d[virt_mask] = virt_emb_3d
+
+            # x_2d = x_2d + interaction
+            # x_3d = x_3d + interaction
+
         if self.interaction_rep_2d == "vnode":
             rep_2d = x_2d[virt_mask]
         elif self.interaction_rep_2d == "mean":
-            rep_2d = x_2d.mean(dim=0, keepdim=True)
+            # rep_2d = x_2d.mean(dim=0)
+            rep_2d = global_mean_pool(x_2d, batch)
         elif self.interaction_rep_2d == "sum":
-            rep_2d = x_2d.sum(dim=0, keepdim=True)
-        
+            # rep_2d = x_2d.sum(dim=0)
+            rep_2d = global_add_pool(x_2d, batch)
+
         if self.interaction_rep_3d in ("com", "const_radius"):
             rep_3d = x_3d[virt_mask]
         elif self.interaction_rep_3d == "mean":
-            rep_3d = x_3d[~virt_mask].mean(dim=0, keepdim=True)
+            # rep_3d = x_3d[~virt_mask].mean(dim=0, keepdim=True)
+            # rep_3d = x_3d.mean(dim=0)
+            rep_3d = global_mean_pool(x_3d, batch)
         elif self.interaction_rep_3d == "sum":
-            rep_3d = x_3d.sum(dim=0, keepdim=True)
+            # rep_3d = x_3d.sum(dim=0)
+            rep_3d = global_add_pool(x_3d, batch)
 
         if self.final_pool == "attention":
             pass  #! TODO
@@ -226,8 +267,6 @@ class Interactor(nn.Module):
             x = rep_2d + rep_3d
         else:
             raise ValueError("Invalid final pooling method")
-
-        # x = self.interactor(x)
 
         return x
 
@@ -277,6 +316,14 @@ class SchNetBlock(nn.Module):
         self.interaction = InteractionBlock(
             hidden_channels, num_gaussians, num_filters, cutoff
         )
+        self.lin1 = nn.Linear(hidden_channels, hidden_channels)
+        self.act = ShiftedSoftplus()
+        self.lin2 = nn.Linear(hidden_channels, hidden_channels)
+
+        nn.init.xavier_uniform_(self.lin1.weight)
+        nn.init.zeros_(self.lin1.bias)
+        nn.init.xavier_uniform_(self.lin2.weight)
+        nn.init.zeros_(self.lin2.bias)
 
     def forward(self, h, pos, batch=None):
         edge_index = radius_graph(pos, r=self.cutoff, batch=batch)
@@ -285,5 +332,9 @@ class SchNetBlock(nn.Module):
         edge_attr = self.distance_expansion(edge_weight)
 
         h = self.interaction(h, edge_index, edge_weight, edge_attr)
+
+        h = self.lin1(h)
+        h = self.act(h)
+        h = self.lin2(h)
 
         return h
