@@ -1,3 +1,4 @@
+import sys
 import uuid
 import csv
 import pdb
@@ -8,6 +9,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import subprocess
 
 from tqdm import tqdm
 from torch_geometric.loader import DataLoader
@@ -343,25 +345,33 @@ def main():
     with open(config_fname, "a") as f:
         writer = csv.writer(f)
 
-        dict_args = vars(args)
-        dict_args.update(loss_dict)
+        args_dict = vars(args)
+        args_dict.update(loss_dict)
 
-        dict_args["pretrain_save_location"] = os.path.join(
+        args_dict["pretrain_save_location"] = os.path.join(
             args.output_model_dir, f"{model_name}_complete.pth"
         )
 
-        # to be updated in the downstream task training runs
-        dict_args["finetune_train_mae"] = 0
-        dict_args["finetune_val_mae"] = 0
-        dict_args["finetune_test_mae"] = 0
-        dict_args["finetune_save_location"] = ""
-        dict_args["id"] = config_id
+        current_git_hash = (
+            subprocess.check_output(["git", "describe", "--always"])
+            .strip()
+            .decode("utf-8")
+        )
 
-        header = dict_args.keys()
+        # to be updated in the downstream task training runs
+        args_dict["finetune_train_mae"] = 0
+        args_dict["finetune_val_mae"] = 0
+        args_dict["finetune_test_mae"] = 0
+        args_dict["finetune_save_location"] = ""
+        args_dict["git_hash"] = current_git_hash
+        args_dict["cmd"] = " ".join(sys.argv)
+        args_dict["id"] = config_id
+
+        header = args_dict.keys()
         if num_rows == 0:
             writer.writerow(header)
 
-        writer.writerow(dict_args.values())
+        writer.writerow(args_dict.values())
 
     save_model(
         save_best=False,
