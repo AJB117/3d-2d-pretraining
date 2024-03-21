@@ -1,3 +1,4 @@
+import wandb
 import sys
 import uuid
 import csv
@@ -158,7 +159,10 @@ def pretrain(
     loss_dict = {
         "CL_loss_accum": CL_loss_accum.item(),
         "CL_acc_accum": CL_acc_accum.item(),
+        "loss_accum": loss_accum.item(),
     }
+
+    wandb.log(loss_dict)
 
     return loss_dict
 
@@ -317,6 +321,9 @@ def main():
         now_in_ms = int(time.time() * 1000)
         model_name = f"{now_in_ms}"
 
+    args_dict = vars(args)
+    wandb.init(project="molecular-pretraining", config=args_dict)
+
     for epoch in range(1, args.epochs + 1):
         print("epoch: {}".format(epoch))
         loss_dict = pretrain(
@@ -379,6 +386,8 @@ def main():
         model=model,
         model_name=model_name,
     )
+
+    wandb.finish()
 
     return config_id
 
