@@ -104,16 +104,14 @@ class Interactor(nn.Module):
         if model_3d == "SchNet":
             self.atom_encoder_3d = nn.Embedding(num_node_class, emb_dim)
             self.atomic_mass = torch.from_numpy(ase.data.atomic_masses).to(device)
-
-        self.blocks_2d = nn.ModuleList(
-            [Block2D(args, model_2d) for _ in range(num_interaction_blocks)]
-        )
-
-        if model_3d == "SchNet":
             block_3d = SchNetBlock(hidden_channels=emb_dim)
 
         self.blocks_3d = nn.ModuleList(
             [block_3d for _ in range(num_interaction_blocks)]
+        )
+
+        self.blocks_2d = nn.ModuleList(
+            [Block2D(args, model_2d) for _ in range(num_interaction_blocks)]
         )
 
         if layer_norm:
@@ -235,9 +233,6 @@ class Interactor(nn.Module):
             # x_2d[virt_mask] = virt_emb_2d
             # x_3d[virt_mask] = virt_emb_3d
 
-            # x_2d = x_2d + interaction
-            # x_3d = x_3d + interaction
-
         if self.interaction_rep_2d == "vnode":
             rep_2d = x_2d[virt_mask]
         elif self.interaction_rep_2d == "mean":
@@ -281,7 +276,7 @@ class Block2D(nn.Module):
         if gnn_type == "GIN":
             layer = GINConv(self.emb_dim)
         elif gnn_type == "GAT":
-            layer = GATConv(self.emb_dim, self.emb_dim // 2, heads=4)
+            layer = GATConv(self.emb_dim, self.emb_dim // 2, heads=args.gat_heads)
         elif gnn_type == "GCN":
             layer = GCNConv(self.emb_dim, self.emb_dim)
         elif gnn_type == "GraphSAGE":
@@ -304,7 +299,6 @@ class SchNetBlock(nn.Module):
         num_interactions=6,
         num_gaussians=50,
         cutoff=10.0,
-        node_class=120,
     ):
         super(SchNetBlock, self).__init__()
         self.hidden_channels = hidden_channels

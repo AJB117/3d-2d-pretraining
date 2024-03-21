@@ -89,6 +89,7 @@ def model_setup():
         )
         graph_pred_linear = torch.nn.Linear(intermediate_dim, num_tasks)
         return model, graph_pred_linear
+
     model = Interactor(
         args,
         num_interaction_blocks=args.num_interaction_blocks,

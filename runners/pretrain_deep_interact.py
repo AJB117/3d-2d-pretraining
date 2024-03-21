@@ -14,7 +14,7 @@ from torch_geometric.loader import DataLoader
 from torch_geometric.nn import global_mean_pool, global_max_pool, global_add_pool
 
 from Geom3D.datasets import Molecule3DDataset, MoleculeDatasetQM9
-from Geom3D.models import GNN, SchNet, EGNN
+from Geom3D.models import GNN, SchNet, EGNN, Interactor
 from config import args
 from ogb.utils.features import get_atom_feature_dims
 from util import NTXentLoss, perturb, VirtualNodeMol
@@ -37,18 +37,16 @@ def compute_accuracy(pred, target):
 
 def save_model(
     save_best,
-    graph_pred_linear,
-    molecule_model_2D,
-    molecule_model_3D,
+    graph_pred_mlp,
+    model,
     model_name,
 ):
     if args.output_model_dir == "":
         return
 
     saver_dict = {
-        "graph_pred_linear": graph_pred_linear.state_dict(),
-        "model_2D": molecule_model_2D.state_dict(),
-        "model_3D": molecule_model_3D.state_dict(),
+        "graph_pred_mlp": graph_pred_mlp.state_dict(),
+        "model": model.state_dict(),
     }
     if save_best:
         global optimal_loss
@@ -62,17 +60,6 @@ def save_model(
         )
 
     torch.save(saver_dict, output_model_path)
-
-
-def pool(x, batch, pool="mean"):
-    if pool == "mean":
-        return global_mean_pool(x, batch)
-    elif pool == "sum":
-        return global_add_pool(x, batch)
-    elif pool == "max":
-        return global_max_pool(x, batch)
-    else:
-        raise NotImplementedError("Pool type not included.")
 
 
 def CL_acc(x1, x2, pos_mask=None):
@@ -103,28 +90,18 @@ def CL_acc(x1, x2, pos_mask=None):
     return (true_positives / num_positives + true_negatives / num_negatives) / 2
 
 
-def train(
+def pretrain(
     args,
     model_name,
-    molecule_model_2D,
-    molecule_model_3D,
+    model,
     device,
     loader,
     optimizer,
-    balances=[
-        1,
-        1,
-        1,
-        1,
-    ],  # hyperparams corresponding to invariant loss, equivariant loss, hybrid loss, matching loss
-    graph_pred_linear=None,
+    graph_pred_mlp=None,
     lr_scheduler=None,
     epoch=0,
 ):
     start_time = time.time()
-
-    molecule_model_2D.train()
-    molecule_model_3D.eval()
 
     CL_loss_accum, CL_acc_accum = 0, 0
     loss_accum = 0
@@ -138,20 +115,6 @@ def train(
 
     for step, batch in enumerate(l):
         batch = batch.to(device)
-
-        node_2D_repr = molecule_model_2D(batch.x, batch.edge_index, batch.edge_attr)
-
-        if args.model_3d == "EGNN":
-            node_3D_repr, pos_3D_repr = molecule_model_3D(
-                batch.x, batch.positions, batch.edge_index, batch.edge_attr
-            )
-        elif args.model_3d == "SchNet":
-            mol_3D_repr, node_3D_repr = molecule_model_3D(
-                batch.x,
-                batch.positions,
-                batch.batch,
-                interaction_rep=args.interaction_rep_3d,
-            )
 
         loss = 0
         loss_accum += loss
@@ -169,6 +132,7 @@ def train(
         lr_scheduler.step(loss_accum)
 
     global optimal_loss
+
     CL_loss_accum /= len(loader)
     CL_acc_accum /= len(loader)
 
@@ -184,9 +148,8 @@ def train(
         optimal_loss = temp_loss
         save_model(
             save_best=True,
-            graph_pred_linear=graph_pred_linear,
-            molecule_model_2D=molecule_model_2D,
-            molecule_model_3D=molecule_model_3D,
+            graph_pred_mlp=graph_pred_mlp,
+            model=model,
             model_name=model_name,
         )
 
@@ -249,84 +212,71 @@ def main():
     )
 
     # set up models
-    molecule_model_2D = GNN(
-        args.num_layer,
-        args.emb_dim,
-        JK=args.JK,
-        drop_ratio=args.dropout_ratio,
-        gnn_type=args.gnn_type,
-    ).to(device)
-
-    print("Using 3d model\t", args.model_3d)
-    if args.model_3d == "SchNet":
-        molecule_model_3D = SchNet(
-            hidden_channels=args.emb_dim,
-            num_filters=args.SchNet_num_filters,
-            num_interactions=args.SchNet_num_interactions,
-            num_gaussians=args.SchNet_num_gaussians,
-            cutoff=args.SchNet_cutoff,
-            readout=args.SchNet_readout,
-            node_class=num_node_classes,
-        ).to(device)
-    elif args.model_3d == "EGNN":
-        molecule_model_3D = EGNN(
-            in_node_nf=args.emb_dim_egnn,
-            in_edge_nf=args.emb_dim_egnn,
-            hidden_nf=args.emb_dim_egnn,
-            n_layers=args.n_layers_egnn,
-            positions_weight=args.positions_weight_egnn,
-            attention=args.attention_egnn,
-            node_attr=False,
-        ).to(device)
-
-    else:
-        raise NotImplementedError("Model {} not included.".format(args.model_3d))
+    model = Interactor(
+        args,
+        num_interaction_blocks=args.num_interaction_blocks,
+        final_pool=args.final_pool,
+        emb_dim=args.emb_dim,
+        device=device,
+        num_node_class=119 + 1,  # + 1 for virtual node
+        interaction_rep_2d=args.interaction_rep_2d,
+        interaction_rep_3d=args.interaction_rep_3d,
+        residual=args.residual,
+        model_2d=args.model_2d,
+        model_3d=args.model_3d,
+        dropout=args.dropout_ratio,
+        batch_norm=args.batch_norm,
+        layer_norm=args.layer_norm,
+    )
 
     if args.JK == "concat":
         intermediate_dim = (args.num_layer + 1) * args.emb_dim
     else:
         intermediate_dim = args.emb_dim
 
-    graph_pred_linear = nn.Sequential(
-        nn.Linear(intermediate_dim, intermediate_dim),
-        nn.BatchNorm1d(intermediate_dim),
-        nn.ReLU(),
-        nn.Linear(intermediate_dim, intermediate_dim),
-    ).to(device)
+    normalizer = None
+    if args.batch_norm:
+        normalizer = nn.BatchNorm1d(intermediate_dim)
+    elif args.layer_norm:
+        normalizer = nn.LayerNorm(intermediate_dim)
+    else:
+        normalizer = nn.Identity()
 
-    if args.interaction_agg == "cat":
-        twice_dim = intermediate_dim * 2
-        interactor = nn.Sequential(
-            nn.Linear(twice_dim, twice_dim),
-            nn.BatchNorm1d(twice_dim),
+    if args.final_pool == "cat":
+        graph_pred_mlp = nn.Sequential(
+            nn.Linear(intermediate_dim * 2, intermediate_dim),
+            normalizer,
             nn.ReLU(),
-            nn.Linear(twice_dim, twice_dim),
-        ).to(device)
-    elif args.interaction_agg in ("sum", "mean"):
-        interactor = nn.Sequential(
+            nn.Linear(intermediate_dim, 1),
+        )
+    else:
+        graph_pred_mlp = nn.Sequential(
             nn.Linear(intermediate_dim, intermediate_dim),
-            nn.BatchNorm1d(intermediate_dim),
+            normalizer,
             nn.ReLU(),
-            nn.Linear(intermediate_dim, intermediate_dim),
-        ).to(device)
+            nn.Linear(intermediate_dim, 1),
+        )
 
-    if args.input_model_file_3d != "":
-        model_weight = torch.load(args.input_model_file_3d)
-        molecule_model_3D.load_state_dict(model_weight["model"])
-        print("successfully loaded 3D model")
+    for layer in graph_pred_mlp:
+        if isinstance(layer, nn.Linear):
+            nn.init.xavier_uniform_(layer.weight)
+
+    if args.input_model_file != "":
+        model_weight = torch.load(args.input_model_file)
+        model.load_state_dict(model_weight["model"])
+        print("successfully loaded model checkpoint")
 
     model_param_group = []
 
     # non-GNN components
-    model_param_group.append({"params": graph_pred_linear.parameters(), "lr": args.lr})
-    model_param_group.append({"params": interactor.parameters(), "lr": args.lr})
+    model_param_group.append({"params": graph_pred_mlp.parameters(), "lr": args.lr})
 
     # GNNs
     model_param_group.append(
-        {"params": molecule_model_2D.parameters(), "lr": args.lr * args.gnn_2d_lr_scale}
+        {"params": model.blocks_2d.parameters(), "lr": args.lr * args.gnn_2d_lr_scale}
     )
     model_param_group.append(
-        {"params": molecule_model_3D.parameters(), "lr": args.lr * args.gnn_3d_lr_scale}
+        {"params": model.blocks_3d.parameters(), "lr": args.lr * args.gnn_3d_lr_scale}
     )
 
     optimizer = optim.Adam(model_param_group, lr=args.lr, weight_decay=args.decay)
@@ -367,15 +317,14 @@ def main():
 
     for epoch in range(1, args.epochs + 1):
         print("epoch: {}".format(epoch))
-        loss_dict = train(
+        loss_dict = pretrain(
             args,
             model_name,
-            molecule_model_2D,
-            molecule_model_3D,
+            model,
             device,
             loader,
             optimizer,
-            graph_pred_linear=graph_pred_linear,
+            graph_pred_mlp=graph_pred_mlp,
             lr_scheduler=lr_scheduler,
             epoch=epoch,
         )
@@ -416,9 +365,8 @@ def main():
 
     save_model(
         save_best=False,
-        graph_pred_linear=graph_pred_linear,
-        molecule_model_2D=molecule_model_2D,
-        molecule_model_3D=molecule_model_3D,
+        graph_pred_mlp=graph_pred_mlp,
+        model=model,
         model_name=model_name,
     )
 

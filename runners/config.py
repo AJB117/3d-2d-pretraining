@@ -231,6 +231,14 @@ parser.add_argument(
 parser.add_argument(
     "--batch_norm", action="store_true", help="use batch norm over layer norm"
 )
+parser.add_argument("--gat_heads", type=int, default=4, help="number of GAT heads")
+parser.add_argument(
+    "--initialization",
+    type=str,
+    default="glorot",
+    choices=["glorot", "he"],
+    help="initialization",
+)
 
 args = parser.parse_args()
 print("arguments\t", args)
