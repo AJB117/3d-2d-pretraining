@@ -22,6 +22,17 @@ from torch_geometric.transforms import BaseTransform
 from Geom3D.models.encoders import get_atom_feature_dims, get_bond_feature_dims
 
 
+def apply_init(initializer: str = "glorot"):
+    if initializer == "glorot":
+        return nn.init.xavier_uniform_
+    elif initializer == "he":
+        return nn.init.kaiming_uniform_
+    elif initializer == "orthogonal":
+        return nn.init.orthogonal_
+    else:
+        raise ValueError("Invalid initializer name.")
+
+
 def CL_acc(x1, x2, pos_mask=None):
     batch_size, _ = x1.size()
     if (
@@ -310,7 +321,7 @@ def get_num_task(dataset):
 # Credit to PyTorch Geometric: https://pytorch-geometric.readthedocs.io/en/latest/_modules/torch_geometric/transforms/virtual_node.html#VirtualNode
 
 
-@functional_transform("virtual_node_mol")
+# @functional_transform("virtual_node_mol")
 class VirtualNodeMol(BaseTransform):
     r"""Appends a virtual node to the given homogeneous graph that is connected
     to all other nodes, as described in the `"Neural Message Passing for

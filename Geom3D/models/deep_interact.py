@@ -20,6 +20,7 @@ from .molecule_gnn_model import GINConv, GATConv, GCNConv, GraphSAGEConv
 from .schnet import InteractionBlock, GaussianSmearing, ShiftedSoftplus
 from torch_scatter import scatter
 import ase
+from runners.util import apply_init
 
 
 class InteractionMLP(nn.Module):
@@ -30,6 +31,7 @@ class InteractionMLP(nn.Module):
         num_layers=2,
         interaction_agg="cat",
         normalizer=nn.Identity,
+        initializer="glorot",
     ):
         super(InteractionMLP, self).__init__()
         self.emb_dim = emb_dim
@@ -49,7 +51,8 @@ class InteractionMLP(nn.Module):
 
         for layer in self.layers:
             if isinstance(layer, nn.Linear):
-                nn.init.xavier_uniform_(layer.weight)
+                # nn.init.xavier_uniform_(layer.weight)
+                apply_init(initializer)(layer.weight)
                 nn.init.zeros_(layer.bias)
 
     def forward(self, rep_2d, rep_3d):
@@ -104,7 +107,9 @@ class Interactor(nn.Module):
         if model_3d == "SchNet":
             self.atom_encoder_3d = nn.Embedding(num_node_class, emb_dim)
             self.atomic_mass = torch.from_numpy(ase.data.atomic_masses).to(device)
-            block_3d = SchNetBlock(hidden_channels=emb_dim)
+            block_3d = SchNetBlock(
+                hidden_channels=emb_dim, initializer=args.initialization
+            )
 
         self.blocks_3d = nn.ModuleList(
             [block_3d for _ in range(num_interaction_blocks)]
@@ -139,6 +144,7 @@ class Interactor(nn.Module):
             num_layers=2,
             interaction_agg=interaction_agg,
             normalizer=normalizer,
+            initializer=args.initialization,
         )
 
         self.interactor = interactor
@@ -299,6 +305,7 @@ class SchNetBlock(nn.Module):
         num_interactions=6,
         num_gaussians=50,
         cutoff=10.0,
+        initializer="glorot",
     ):
         super(SchNetBlock, self).__init__()
         self.hidden_channels = hidden_channels
@@ -314,9 +321,11 @@ class SchNetBlock(nn.Module):
         self.act = ShiftedSoftplus()
         self.lin2 = nn.Linear(hidden_channels, hidden_channels)
 
-        nn.init.xavier_uniform_(self.lin1.weight)
+        # nn.init.xavier_uniform_(self.lin1.weight)
+        apply_init(initializer)(self.lin1.weight)
         nn.init.zeros_(self.lin1.bias)
-        nn.init.xavier_uniform_(self.lin2.weight)
+        # nn.init.xavier_uniform_(self.lin2.weight)
+        apply_init(initializer)(self.lin2.weight)
         nn.init.zeros_(self.lin2.bias)
 
     def forward(self, h, pos, batch=None):

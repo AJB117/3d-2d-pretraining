@@ -21,7 +21,7 @@ from Geom3D.datasets import (
     GeneratedMoleculeDatasetQM9,
 )
 from splitters import QM9_random_customized_01, QM9_random_customized_02, QM9_50k_split
-from util import VirtualNodeMol
+from util import VirtualNodeMol, apply_init
 
 warnings.filterwarnings("ignore")
 
@@ -132,7 +132,7 @@ def model_setup():
 
     for layer in graph_pred_mlp:
         if isinstance(layer, nn.Linear):
-            nn.init.xavier_uniform_(layer.weight)
+            apply_init(args.initialization)(layer.weight)
 
     return (
         model,
