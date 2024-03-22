@@ -149,26 +149,16 @@ class Interactor(nn.Module):
 
         self.interactor = interactor
 
-    def forward(self, *argv):
-        if len(argv) == 5:
-            x, edge_index, edge_attr, positions, batch = (
-                argv[0],
-                argv[1],
-                argv[2],
-                argv[3],
-                argv[4],
-            )
-        elif len(argv) == 1:
-            data = argv[0]
-            x, edge_index, edge_attr, positions, batch = (
-                data.x,
-                data.edge_index,
-                data.edge_attr,
-                data.positions,
-                data.batch,
-            )
-        else:
-            raise ValueError("unmatched number of arguments.")
+    def forward(
+        self,
+        x,
+        edge_index,
+        edge_attr,
+        positions,
+        batch,
+        require_midstream=False,
+    ):
+        midstream_outs_2d, midstream_outs_3d = [], []
 
         x_2d = self.atom_encoder_2d(x)
         prev_2d = x_2d
@@ -230,6 +220,9 @@ class Interactor(nn.Module):
             prev_2d = x_2d
             prev_3d = x_3d
 
+            midstream_outs_2d.append(x_2d)
+            midstream_outs_3d.append(x_3d)
+
             # interaction = torch.cat([x_2d, x_3d], dim=-1)
             interaction = self.interactor(x_2d, x_3d)
 
@@ -268,6 +261,9 @@ class Interactor(nn.Module):
             x = rep_2d + rep_3d
         else:
             raise ValueError("Invalid final pooling method")
+
+        if require_midstream:
+            return x, midstream_outs_2d, midstream_outs_3d
 
         return x
 
