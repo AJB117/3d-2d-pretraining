@@ -235,10 +235,30 @@ parser.add_argument("--gat_heads", type=int, default=4, help="number of GAT head
 parser.add_argument(
     "--initialization",
     type=str,
-    default="glorot",
-    choices=["glorot", "he"],
+    default="glorot_uniform",
+    choices=["glorot_uniform", "he_uniform", "glorot_normal", "he_normal"],
     help="initialization",
 )
+parser.add_argument(
+    "--pretrain_2d_tasks",
+    type=str,
+    nargs="+",
+    default=["interatomic_dist"],
+    help="tasks to pretrain the 2D blocks on, ordered by block",
+)
+parser.add_argument(
+    "--pretrain_3d_tasks",
+    type=str,
+    nargs="+",
+    default=["edge_existence"],
+    help="tasks to pretrain the 3D blocks on, ordered by block",
+)
+parser.add_argument(
+    "--start_tasks_from_end",
+    action="store_true",
+    help="add each pretraining task to the end of each block",
+)
+parser.add_argument("--wandb", action="store_true", help="use wandb")
 
 args = parser.parse_args()
 print("arguments\t", args)
