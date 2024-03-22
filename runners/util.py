@@ -22,11 +22,15 @@ from torch_geometric.transforms import BaseTransform
 from Geom3D.models.encoders import get_atom_feature_dims, get_bond_feature_dims
 
 
-def apply_init(initializer: str = "glorot"):
-    if initializer == "glorot":
+def apply_init(initializer: str = "glorot_uniform"):
+    if initializer == "glorot_uniform":
         return nn.init.xavier_uniform_
-    elif initializer == "he":
+    elif initializer == "glorot_normal":
+        return nn.init.xavier_normal_
+    elif initializer == "he_uniform":
         return nn.init.kaiming_uniform_
+    elif initializer == "he_normal":
+        return nn.init.kaiming_normal_ 
     elif initializer == "orthogonal":
         return nn.init.orthogonal_
     else:
