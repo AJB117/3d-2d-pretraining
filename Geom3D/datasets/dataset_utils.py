@@ -74,7 +74,7 @@ def extract_MMFF_energy_pos(rdkit_mol, num_conformers=5):
 atom_type_count = 119
 
 
-def mol_to_graph_data_obj_simple_2D(mol):
+def mol_to_graph_data_obj_simple_2D(mol, max_num_nodes=50):
     # atoms
     atom_features_list = []
     for atom in mol.GetAtoms():
@@ -116,6 +116,7 @@ def mol_to_graph_data_obj_simple_2D(mol):
         bond_lengths=torch.empty((0, 1), dtype=torch.float),
         bond_angles=torch.empty((0, 4), dtype=torch.float),
         angle_directions=torch.empty((0, 1), dtype=torch.long),
+        interatomic_distances=torch.empty((0, 1), dtype=torch.float),
     )
     return data
 
@@ -205,8 +206,9 @@ def get_angles(edges, atom_poses, dir_type="HT", get_complement_angles=False):
     return bond_angles, bond_angle_dirs
 
 
+# 50 atoms is typically good enough for small molecules
 def mol_to_graph_data_obj_simple_3D(
-    mol, pure_atomic_num=False, get_complement_angles=False
+    mol, pure_atomic_num=False, get_complement_angles=False, max_num_nodes=50
 ):
     # atoms
     atom_features_list = []
@@ -230,6 +232,12 @@ def mol_to_graph_data_obj_simple_3D(
     conformer = mol.GetConformers()[0]
     positions = conformer.GetPositions()
     positions = torch.Tensor(positions)
+
+    interatomic_diffs = positions.unsqueeze(0) - positions.unsqueeze(1)
+    interatomic_distances = torch.norm(interatomic_diffs, dim=-1)
+    interatomic_distances = torch.nn.functional.pad(
+        interatomic_distances, (0, max_num_nodes - interatomic_distances.size(0))
+    )
 
     # bonds
     num_bond_features = 2  # bond type, bond direction
@@ -267,7 +275,9 @@ def mol_to_graph_data_obj_simple_3D(
         bond_lengths = torch.empty((0, 1), dtype=torch.float)
         bond_angles = torch.empty((0, 4), dtype=torch.float)
         angle_directions = torch.empty((0, 1), dtype=torch.long)
+        interatomic_distances = torch.empty((0, 1), dtype=torch.float)
 
+    # pdb.set_trace()
     data = Data(
         x=x,
         positions=positions,
@@ -276,6 +286,7 @@ def mol_to_graph_data_obj_simple_3D(
         bond_lengths=bond_lengths,
         bond_angles=bond_angles,
         angle_directions=angle_directions,
+        atomic_distances=interatomic_distances,
     )
     return data, atom_count
 

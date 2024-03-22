@@ -248,7 +248,8 @@ class MoleculeDatasetQM9(InMemoryDataset):
                 continue
 
             data, atom_count = mol_to_graph_data_obj_simple_3D(
-                mol, pure_atomic_num=self.use_pure_atomic_num
+                mol,
+                pure_atomic_num=self.use_pure_atomic_num,
             )
 
             data.id = torch.tensor([idx])
