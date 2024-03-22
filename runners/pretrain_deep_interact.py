@@ -26,6 +26,24 @@ from util import NTXentLoss, perturb, VirtualNodeMol
 from collections import defaultdict
 
 
+# From GPT-4
+def pretty_print_dict(d):
+    if not d:
+        print("The dictionary is empty.")
+        return
+
+    max_key_length = max(len(str(key)) for key in d.keys())
+    max_value_length = max(len(str(value)) for value in d.values())
+
+    print(f"{'Key'.ljust(max_key_length)} | {'Value'.ljust(max_value_length)}")
+    print("-" * (max_key_length + max_value_length + 3))
+
+    for key, value in d.items():
+        print(
+            f"{str(key).ljust(max_key_length)} | {str(value).ljust(max_value_length)}"
+        )
+
+
 ogb_feat_dim = get_atom_feature_dims()
 ogb_feat_dim = [x - 1 for x in ogb_feat_dim]
 ogb_feat_dim[-2] = 0
@@ -49,6 +67,7 @@ def save_model(
     model_name,
     pretrained_heads_2d=None,
     pretrained_heads_3d=None,
+    optimal_loss=1e10,
 ):
     if args.output_model_dir == "":
         return
@@ -60,8 +79,7 @@ def save_model(
         "pretrained_heads_3d": [head.state_dict() for head in pretrained_heads_3d],
     }
     if save_best:
-        global optimal_loss
-        print("save model with loss: {:.5f}\n".format(optimal_loss))
+        print("save model with total loss: {:.5f}\n".format(optimal_loss))
         output_model_path = os.path.join(
             args.output_model_dir, f"{model_name}_complete.pth"
         )
@@ -133,9 +151,16 @@ def interatomic_distance_loss(batch, embs, pred_head, max_samples=10):
     Given a batch of embeddings, predict the interatomic distances
     with the given head and return the mean squared error loss.
     """
-    interatomic_distances = batch.atomic_distances
-
+    positions = batch.positions
+    interatomic_diffs = positions.unsqueeze(0) - positions.unsqueeze(1)
+    interatomic_distances = torch.norm(interatomic_diffs, dim=-1)
     num_nodes_per_batch = torch.bincount(batch.batch).to(embs.device)
+    max_num_nodes = batch.num_nodes
+
+    interatomic_distances = F.pad(
+        interatomic_distances, (0, max_num_nodes - interatomic_distances.size(0))
+    )
+
     num_samples_per_batch = torch.min(
         torch.tensor(max_samples), num_nodes_per_batch
     ).to(embs.device)
@@ -154,7 +179,6 @@ def interatomic_distance_loss(batch, embs, pred_head, max_samples=10):
     pair_embs = torch.cat([embs[pairs[:, 0]], embs[pairs[:, 1]]], dim=1).to(embs.device)
 
     pred_distances = pred_head(pair_embs).squeeze()
-    pdb.set_trace()  # bug: batches could go beyond the 50 atom limit; maybe just compute the distances at runtime
     true_distances = interatomic_distances[pairs[:, 0], pairs[:, 1]]
 
     loss = mse_loss(pred_distances, true_distances)
@@ -207,6 +231,7 @@ def pretrain(
     epoch=0,
     pretrain_heads_2d=None,
     pretrain_heads_3d=None,
+    optimal_loss=1e10,
 ):
     loss_dict = defaultdict(int)
     start_time = time.time()
@@ -280,8 +305,6 @@ def pretrain(
     elif args.lr_scheduler in ["ReduceLROnPlateau"]:
         lr_scheduler.step(loss_dict["loss_accum"])
 
-    global optimal_loss
-
     for key in loss_dict:
         if args.lr_scheduler in ["CosineAnnealingWarmRestarts"] and key == "loss_accum":
             continue
@@ -292,6 +315,9 @@ def pretrain(
 
     print("Time: {:.5f}\n".format(time.time() - start_time))
 
+    loss_dict["loss_accum"] = loss_dict["loss_accum"].item()
+
+    pretty_print_dict(loss_dict)
     temp_loss = loss_dict["loss_accum"]
 
     if temp_loss < optimal_loss:
@@ -303,14 +329,16 @@ def pretrain(
             model_name=model_name,
             pretrained_heads_2d=pretrain_heads_2d,
             pretrained_heads_3d=pretrain_heads_3d,
+            optimal_loss=optimal_loss,
         )
 
-    loss_dict["loss_accum"] = loss_accum.item()
+    loss_dict["loss_accum"] = loss_dict["loss_accum"].item()
+    loss_dict["optimal_loss"] = optimal_loss
 
     if args.wandb:
         wandb.log(loss_dict)
 
-    return loss_dict
+    return loss_dict, optimal_loss
 
 
 def main():
@@ -485,11 +513,15 @@ def main():
     args_dict = vars(args)
 
     if args.wandb:
-        wandb.init(project="molecular-pretraining", config=args_dict)
+        wandb.init(
+            name=f"pretrain_{args.dataset}_{args.output_model_name}",
+            project="molecular-pretraining",
+            config=args_dict,
+        )
 
     for epoch in range(1, args.epochs + 1):
         print("epoch: {}".format(epoch))
-        loss_dict = pretrain(
+        loss_dict, optimal_loss = pretrain(
             args,
             model_name,
             model,
@@ -501,6 +533,7 @@ def main():
             epoch=epoch,
             pretrain_heads_2d=pretrain_heads_2d,
             pretrain_heads_3d=pretrain_heads_3d,
+            optimal_loss=optimal_loss,
         )
 
     # to aggregate later with a separate script
@@ -552,6 +585,7 @@ def main():
         model_name=model_name,
         pretrained_heads_2d=pretrain_heads_2d,
         pretrained_heads_3d=pretrain_heads_3d,
+        optimal_loss=optimal_loss,
     )
 
     if args.wandb:

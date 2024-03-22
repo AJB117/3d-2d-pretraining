@@ -1,3 +1,4 @@
+import wandb
 import warnings
 import csv
 import pdb
@@ -442,6 +443,15 @@ if __name__ == "__main__":
 
     train_mae_list, val_mae_list, test_mae_list = [], [], []
     best_val_mae, best_val_idx = 1e10, 0
+
+    args_dict = vars(args)
+
+    if args.wandb:
+        wandb.init(
+            name=f"finetune_{args.dataset}_{args.output_model_name}",
+            project="molecular-pretraining",
+            config=args_dict,
+        )
 
     for epoch in range(1, args.epochs + 1):
         start_time = time.time()
