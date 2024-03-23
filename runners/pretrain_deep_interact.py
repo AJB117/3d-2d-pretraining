@@ -12,6 +12,7 @@ import torch.nn as nn
 import torch.optim as optim
 import subprocess
 import torch.nn.functional as F
+import warnings
 
 from tqdm import tqdm
 from torch_geometric.loader import DataLoader
@@ -24,6 +25,8 @@ from config import args
 from ogb.utils.features import get_atom_feature_dims
 from util import NTXentLoss, perturb, VirtualNodeMol
 from collections import defaultdict
+
+warnings.filterwarnings("ignore")
 
 
 # From GPT-4
@@ -161,21 +164,19 @@ def interatomic_distance_loss(batch, embs, pred_head, max_samples=10):
         interatomic_distances, (0, max_num_nodes - interatomic_distances.size(0))
     )
 
-    num_samples_per_batch = torch.min(
-        torch.tensor(max_samples), num_nodes_per_batch
-    ).to(embs.device)
+    pairs = []
+    for i in range(len(num_nodes_per_batch)):
+        offset = torch.sum(num_nodes_per_batch[:i])
+        if max_samples > 0:
+            combinations = torch.randint(0, num_nodes_per_batch[i], (max_samples, 2))
+        else:
+            combinations = torch.combinations(torch.arange(num_nodes_per_batch[i]))
+        combinations = torch.cat([combinations, combinations[:, [1, 0]]], dim=0).to(
+            embs.device
+        )
+        pairs.append(combinations + offset)
 
-    pairs = torch.cat(
-        [
-            torch.randint(0, num_nodes_per_batch[i], (num_samples_per_batch[i], 2)).to(
-                embs.device
-            )
-            + torch.sum(num_nodes_per_batch[:i])
-            for i in range(len(num_nodes_per_batch))
-        ],
-        dim=0,
-    ).to(embs.device)
-
+    pairs = torch.cat(pairs, dim=0)
     pair_embs = torch.cat([embs[pairs[:, 0]], embs[pairs[:, 1]]], dim=1).to(embs.device)
 
     pred_distances = pred_head(pair_embs).squeeze()
@@ -186,7 +187,7 @@ def interatomic_distance_loss(batch, embs, pred_head, max_samples=10):
     return loss
 
 
-def edge_existence_loss(batch, embs, pred_head, max_samples=10):
+def edge_existence_loss(batch, embs, pred_head, neg_samples=20):
     """
     Given a batch of embeddings, predict whether an edge exists between
     two atoms with the given head and return the binary cross entropy loss.
@@ -199,7 +200,7 @@ def edge_existence_loss(batch, embs, pred_head, max_samples=10):
     )
 
     neg_links = batched_negative_sampling(
-        batch.edge_index, batch.batch, num_neg_samples=max_samples
+        batch.edge_index, batch.batch, num_neg_samples=neg_samples
     ).to(embs.device)
     neg_link_embs = torch.cat([embs[neg_links[0]], embs[neg_links[1]]], dim=1).to(
         embs.device
@@ -274,7 +275,9 @@ def pretrain(
             tasks_2d, pretrain_heads_2d, midstream_2d_outs
         ):
             if task_2d == "interatomic_dist":
-                new_loss = interatomic_distance_loss(batch, midstream, pred_head)
+                new_loss = interatomic_distance_loss(
+                    batch, midstream, pred_head, max_samples=-1
+                )
                 loss += new_loss
 
             loss_terms.append(new_loss)
@@ -332,7 +335,6 @@ def pretrain(
             optimal_loss=optimal_loss,
         )
 
-    loss_dict["loss_accum"] = loss_dict["loss_accum"].item()
     loss_dict["optimal_loss"] = optimal_loss
 
     if args.wandb:

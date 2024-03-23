@@ -142,30 +142,14 @@ def model_setup():
 
 
 def load_model(
-    model_3d,
-    model_2d,
-    graph_pred_linear,
+    model,
     model_weight_file,
 ):
     print("Loading from {}".format(model_weight_file))
-    model_weight = torch.load(model_weight_file)
+    model_weights = torch.load(model_weight_file)
     if args.mode == "method":  # as opposed to baseline
-        model_2d.load_state_dict(model_weight["model_2D"])
+        model.load_state_dict(model_weights["model"])
 
-        if (graph_pred_linear is not None) and ("graph_pred_linear" in model_weight):
-            graph_pred_linear.load_state_dict(model_weight["graph_pred_linear"])
-
-        return
-
-    if "model_3D" in model_weight:
-        model_3d.load_state_dict(model_weight["model_3D"])
-        if (graph_pred_linear is not None) and ("graph_pred_linear" in model_weight):
-            graph_pred_linear.load_state_dict(model_weight["graph_pred_linear"])
-
-    else:
-        model_2d.load_state_dict(model_weight["model"])
-        if (graph_pred_linear is not None) and ("graph_pred_linear" in model_weight):
-            graph_pred_linear.load_state_dict(model_weight["graph_pred_linear"])
     return
 
 
@@ -389,7 +373,6 @@ if __name__ == "__main__":
     if args.input_model_file != "":
         load_model(
             model,
-            graph_pred_mlp,
             args.input_model_file,
         )
     else:
