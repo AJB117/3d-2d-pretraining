@@ -261,7 +261,7 @@ parser.add_argument(
 parser.add_argument(
     "--pretrain_strategy",
     choices=["geometric", "masking", "both"],
-    defualt="geometric",
+    default="geometric",
     help="pretraining strategy",
 )
 parser.add_argument("--wandb", action="store_true", help="use wandb")
