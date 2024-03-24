@@ -237,7 +237,6 @@ def pretrain(
     loss_dict = defaultdict(int)
     start_time = time.time()
 
-    CL_loss_accum, CL_acc_accum = 0, 0
     loss_accum = 0
 
     if args.verbose:
@@ -258,40 +257,44 @@ def pretrain(
             batch.batch,
             require_midstream=True,
         )
+        
+        if args.pretraining_strategy == "geometric":
+            tasks_2d = args.pretrain_2d_tasks
+            tasks_3d = args.pretrain_3d_tasks
 
-        tasks_2d = args.pretrain_2d_tasks
-        tasks_3d = args.pretrain_3d_tasks
+            loss_terms = []
+            loss = 0
 
-        loss_terms = []
-        loss = 0
+            if args.start_tasks_from_end:
+                pretrain_heads_2d = pretrain_heads_2d[::-1]
+                pretrain_heads_3d = pretrain_heads_3d[::-1]
+                midstream_2d_outs = midstream_2d_outs[::-1]
+                midstream_3d_outs = midstream_3d_outs[::-1]
 
-        if args.start_tasks_from_end:
-            pretrain_heads_2d = pretrain_heads_2d[::-1]
-            pretrain_heads_3d = pretrain_heads_3d[::-1]
-            midstream_2d_outs = midstream_2d_outs[::-1]
-            midstream_3d_outs = midstream_3d_outs[::-1]
+            for task_2d, pred_head, midstream in zip(
+                tasks_2d, pretrain_heads_2d, midstream_2d_outs
+            ):
+                if task_2d == "interatomic_dist":
+                    new_loss = interatomic_distance_loss(
+                        batch, midstream, pred_head, max_samples=-1
+                    )
+                    loss += new_loss
 
-        for task_2d, pred_head, midstream in zip(
-            tasks_2d, pretrain_heads_2d, midstream_2d_outs
-        ):
-            if task_2d == "interatomic_dist":
-                new_loss = interatomic_distance_loss(
-                    batch, midstream, pred_head, max_samples=-1
-                )
-                loss += new_loss
+                loss_terms.append(new_loss)
+                loss_dict[task_2d] += new_loss.item()
 
-            loss_terms.append(new_loss)
-            loss_dict[task_2d] += new_loss.item()
+            for task_3d, pred_head, midstream in zip(
+                tasks_3d, pretrain_heads_3d, midstream_3d_outs
+            ):
+                if task_3d == "edge_existence":
+                    new_loss = edge_existence_loss(batch, midstream, pred_head)
+                    loss += new_loss
 
-        for task_3d, pred_head, midstream in zip(
-            tasks_3d, pretrain_heads_3d, midstream_3d_outs
-        ):
-            if task_3d == "edge_existence":
-                new_loss = edge_existence_loss(batch, midstream, pred_head)
-                loss += new_loss
+                loss_terms.append(new_loss)
+                loss_dict[task_3d] += new_loss.item()
 
-            loss_terms.append(new_loss)
-            loss_dict[task_3d] += new_loss.item()
+        elif args.pretraining_strategy == "masking":
+            pass # ! TODO: Implement masking strategy
 
         loss_dict["loss_accum"] += loss
 

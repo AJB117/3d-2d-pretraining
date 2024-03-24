@@ -258,6 +258,12 @@ parser.add_argument(
     action="store_true",
     help="add each pretraining task to the end of each block",
 )
+parser.add_argument(
+    "--pretrain_strategy",
+    choices=["geometric", "masking", "both"],
+    defualt="geometric",
+    help="pretraining strategy",
+)
 parser.add_argument("--wandb", action="store_true", help="use wandb")
 
 args = parser.parse_args()
