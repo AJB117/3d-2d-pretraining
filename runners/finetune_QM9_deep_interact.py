@@ -78,8 +78,33 @@ def split(dataset, data_root):
 
 
 def model_setup():
-    if args.mode != "method":
-        model = SchNet(
+    normalizer = None
+    if args.batch_norm:
+        normalizer = nn.BatchNorm1d(intermediate_dim)
+    elif args.layer_norm:
+        normalizer = nn.LayerNorm(intermediate_dim)
+    else:
+        normalizer = nn.Identity()
+
+    if args.use_3d_only or args.use_2d_only:
+        graph_pred_mlp = nn.Sequential(
+            nn.Linear(intermediate_dim, intermediate_dim),
+            normalizer,
+            nn.ReLU(),
+            nn.Linear(intermediate_dim, num_tasks),
+        )
+    elif args.mode == "method" and args.final_pool == "cat":
+        graph_pred_mlp = nn.Sequential(
+            nn.Linear(intermediate_dim * 2, intermediate_dim),
+            normalizer,
+            nn.ReLU(),
+            nn.Linear(intermediate_dim, num_tasks),
+        )
+
+    model_2d, model_3d = None, None
+
+    if args.mode == "3d":
+        model_3d = SchNet(
             hidden_channels=args.emb_dim,
             num_filters=args.SchNet_num_filters,
             num_interactions=args.SchNet_num_interactions,
@@ -88,8 +113,14 @@ def model_setup():
             readout=args.SchNet_readout,
             node_class=node_class,
         )
-        graph_pred_linear = torch.nn.Linear(intermediate_dim, num_tasks)
-        return model, graph_pred_linear
+    elif args.mode == "2d":
+        model_2d = GNN(
+            args.num_layer,
+            args.emb_dim,
+            JK=args.JK,
+            drop_ratio=args.dropout_ratio,
+            gnn_type=args.gnn_type,
+        ).to(device)
 
     model = Interactor(
         args,
@@ -108,48 +139,18 @@ def model_setup():
         layer_norm=args.layer_norm,
     )
 
-    normalizer = None
-    if args.batch_norm:
-        normalizer = nn.BatchNorm1d(intermediate_dim)
-    elif args.layer_norm:
-        normalizer = nn.LayerNorm(intermediate_dim)
-    else:
-        normalizer = nn.Identity()
-
-    if args.final_pool == "cat":
-        graph_pred_mlp = nn.Sequential(
-            nn.Linear(intermediate_dim * 2, intermediate_dim),
-            normalizer,
-            nn.ReLU(),
-            nn.Linear(intermediate_dim, num_tasks),
-        )
-    else:
-        graph_pred_mlp = nn.Sequential(
-            nn.Linear(intermediate_dim, intermediate_dim),
-            normalizer,
-            nn.ReLU(),
-            nn.Linear(intermediate_dim, num_tasks),
-        )
-
     for layer in graph_pred_mlp:
         if isinstance(layer, nn.Linear):
             apply_init(args.initialization)(layer.weight)
 
-    return (
-        model,
-        graph_pred_mlp,
-    )
+    return model, graph_pred_mlp, model_2d, model_3d
 
 
-def load_model(
-    model,
-    model_weight_file,
-):
+def load_model(model, model_weight_file, model_3d=None, model_2d=None):
     print("Loading from {}".format(model_weight_file))
     model_weights = torch.load(model_weight_file)
     if args.mode == "method":  # as opposed to baseline
         model.load_state_dict(model_weights["model"])
-
     return
 
 
@@ -195,14 +196,25 @@ def train(epoch, device, loader, optimizer):
     for step, batch in enumerate(L):
         batch = batch.to(device)
 
-        if args.mode != "method":
-            molecule_rep = model(batch.x, batch.positions, batch=batch.batch)
-            pred = graph_pred_mlp(molecule_rep).squeeze()
+        if args.mode != "method":  # assumes 3d
+            mol_rep = model(batch.x, batch.positions, batch=batch.batch)
         else:
-            interact_rep = model(
-                batch.x, batch.edge_index, batch.edge_attr, batch.positions, batch.batch
-            )
-            pred = graph_pred_mlp(interact_rep).squeeze()
+            if args.use_3d_only:
+                mol_rep = model.forward_3d(batch.x, batch.positions, batch.batch)
+            elif args.use_2d_only:
+                mol_rep = model.forward_2d(
+                    batch.x, batch.edge_index, batch.edge_attr, batch.batch
+                )
+            else:
+                mol_rep = model(
+                    batch.x,
+                    batch.edge_index,
+                    batch.edge_attr,
+                    batch.positions,
+                    batch.batch,
+                )
+
+            pred = graph_pred_mlp(mol_rep).squeeze()
 
         B = pred.size()[0]
         y = batch.y.view(B, -1)[:, task_id]
@@ -256,14 +268,25 @@ def eval(device, loader):
     for batch in L:
         batch = batch.to(device)
 
-        if args.mode != "method":
-            molecule_rep = model(batch.x, batch.positions, batch=batch.batch)
-            pred = graph_pred_mlp(molecule_rep).squeeze()
+        if args.mode != "method":  # assumes 3d
+            mol_rep = model(batch.x, batch.positions, batch=batch.batch)
         else:
-            interact_rep = model(
-                batch.x, batch.edge_index, batch.edge_attr, batch.positions, batch.batch
-            )
-            pred = graph_pred_mlp(interact_rep).squeeze()
+            if args.use_3d_only:
+                mol_rep = model.forward_3d(batch.x, batch.positions, batch.batch)
+            elif args.use_2d_only:
+                mol_rep = model.forward_2d(
+                    batch.x, batch.edge_index, batch.edge_attr, batch.batch
+                )
+            else:
+                mol_rep = model(
+                    batch.x,
+                    batch.edge_index,
+                    batch.edge_attr,
+                    batch.positions,
+                    batch.batch,
+                )
+
+            pred = graph_pred_mlp(mol_rep).squeeze()
 
         B = pred.size()[0]
         y = batch.y.view(B, -1)[:, task_id]
@@ -368,13 +391,10 @@ if __name__ == "__main__":
         intermediate_dim = args.emb_dim
 
     node_class, edge_class = 120, 5
-    (model, graph_pred_mlp) = model_setup()
+    model, graph_pred_mlp, model_2d, model_3d = model_setup()
 
     if args.input_model_file != "":
-        load_model(
-            model,
-            args.input_model_file,
-        )
+        load_model(model, args.input_model_file, model_3d=model_3d, model_2d=model_2d)
     else:
         print("fine-tuning from scratch...")
 

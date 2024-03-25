@@ -182,16 +182,6 @@ parser.add_argument(
 )
 parser.add_argument("--output_model_name", type=str, default="")
 parser.add_argument("--process_num", type=int, default=1)
-parser.add_argument(
-    "--use_3d",
-    action="store_true",
-    help="use 3d gnn during finetuning with synthetic coordinates",
-)
-parser.add_argument(
-    "--use_2d",
-    action="store_true",
-    help="use 2d gnn during finetuning with synthetic coordinates concatenated",
-)
 
 # DEEP INTERACTION HYPERPARAMS
 parser.add_argument(
@@ -265,6 +255,16 @@ parser.add_argument(
     help="pretraining strategy",
 )
 parser.add_argument("--wandb", action="store_true", help="use wandb")
+parser.add_argument(
+    "--use_3d_only",
+    action="store_true",
+    help="use 3d layers only",
+)
+parser.add_argument(
+    "--use_2d_only",
+    action="store_true",
+    help="use 2d layers only",
+)
 
 args = parser.parse_args()
 print("arguments\t", args)
