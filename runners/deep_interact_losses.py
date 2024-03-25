@@ -46,7 +46,7 @@ def interatomic_distance_loss(batch, embs, pred_head, max_samples=10):
     return loss
 
 
-def edge_existence_loss(batch, embs, pred_head, neg_samples=20):
+def edge_existence_loss(batch, embs, pred_head, neg_samples=50):
     """
     Given a batch of embeddings, predict whether an edge exists between
     two atoms with the given head and return the binary cross entropy loss.

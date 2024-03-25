@@ -532,7 +532,7 @@ if __name__ == "__main__":
         )
 
         writer.writerow(dict_args.values())
-    
+
     if args.wandb:
         wandb.log(
             {
