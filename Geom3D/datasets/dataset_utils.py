@@ -207,7 +207,7 @@ def get_angles(edges, atom_poses, dir_type="HT", get_complement_angles=False):
 
 # 50 atoms is typically good enough for small molecules
 def mol_to_graph_data_obj_simple_3D(
-    idx, mol, pure_atomic_num=False, get_complement_angles=False, max_num_nodes=50
+    mol, pure_atomic_num=False, get_complement_angles=False, max_num_nodes=50
 ):
     # atoms
     atom_features_list = []
