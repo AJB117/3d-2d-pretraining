@@ -459,7 +459,7 @@ if __name__ == "__main__":
     for epoch in range(1, args.epochs + 1):
         start_time = time.time()
         loss_acc, loss_mae = train(epoch, device, train_loader, optimizer)
-        print("Epoch: {}\nLoss: {}".format(epoch, loss_acc))
+        print("Epoch for {}: {}\nLoss: {}".format(epoch, args.task, loss_acc))
 
         if epoch % args.print_every_epoch == 0:
             if args.eval_train:
@@ -477,6 +477,15 @@ if __name__ == "__main__":
                     loss_mae, val_mae, test_mae
                 )
             )
+
+            if args.wandb:
+                wandb.log(
+                    {
+                        f"{args.task}_train_mae": loss_mae,
+                        f"{args.task}_val_mae": val_mae,
+                        f"{args.task}_test_mae": test_mae,
+                    }
+                )
 
             if val_mae < best_val_mae:
                 best_val_mae = val_mae
@@ -508,9 +517,9 @@ if __name__ == "__main__":
     with open("configs.csv", "a") as f:
         writer = csv.writer(f)
         loss_dict = {
-            "finetune_train_mae": train_mae_list[best_val_idx],
-            "finetune_val_mae": val_mae_list[best_val_idx],
-            "finetune_test_mae": test_mae_list[best_val_idx],
+            f"{args.task}_finetune_train_mae": train_mae_list[best_val_idx],
+            f"{args.task}_finetune_val_mae": val_mae_list[best_val_idx],
+            f"{args.task}_finetune_test_mae": test_mae_list[best_val_idx],
         }
 
         dict_args = vars(args)
@@ -523,5 +532,16 @@ if __name__ == "__main__":
         )
 
         writer.writerow(dict_args.values())
+    
+    if args.wandb:
+        wandb.log(
+            {
+                f"{args.task}_finetune_train_mae": train_mae_list[best_val_idx],
+                f"{args.task}_finetune_val_mae": val_mae_list[best_val_idx],
+                f"{args.task}_finetune_test_mae": test_mae_list[best_val_idx],
+            }
+        )
+
+        wandb.finish()
 
     save_model(save_best=False)
