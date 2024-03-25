@@ -220,6 +220,25 @@ def edge_existence_loss(batch, embs, pred_head, neg_samples=20):
     return loss
 
 
+def edge_classification_loss(batch, embs, pred_head):
+    """
+    Given a batch of embeddings, predict the bond type between two atoms
+    """
+    pos_links = batch.edge_index
+    pos_link_attrs = batch.edge_attr
+    pos_link_embs = torch.cat([embs[pos_links[0]], embs[pos_links[1]]], dim=1).to(
+        embs.device
+    )
+
+    pred_pos_links = pred_head(pos_link_embs).squeeze()
+
+    pos_labels = pos_link_attrs[:, 0]
+
+    loss = bce_loss(pred_pos_links, pos_labels)
+
+    return loss
+
+
 def pretrain(
     args,
     model_name,
@@ -257,7 +276,7 @@ def pretrain(
             batch.batch,
             require_midstream=True,
         )
-        
+
         if args.pretraining_strategy == "geometric":
             tasks_2d = args.pretrain_2d_tasks
             tasks_3d = args.pretrain_3d_tasks
@@ -289,12 +308,15 @@ def pretrain(
                 if task_3d == "edge_existence":
                     new_loss = edge_existence_loss(batch, midstream, pred_head)
                     loss += new_loss
+                elif task_3d == "edge_classification":
+                    new_loss = edge_classification_loss(batch, midstream, pred_head)
+                    loss += new_loss
 
                 loss_terms.append(new_loss)
                 loss_dict[task_3d] += new_loss.item()
 
         elif args.pretraining_strategy == "masking":
-            pass # ! TODO: Implement masking strategy
+            pass  # ! TODO: Implement masking strategy
 
         loss_dict["loss_accum"] += loss
 
