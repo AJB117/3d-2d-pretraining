@@ -96,3 +96,19 @@ def edge_classification_loss(batch, embs, pred_head):
     loss = bce_loss(pred_pos_links, pos_labels)
 
     return loss
+
+
+def bond_angle_loss(batch, embs, pred_head):
+    """
+    Given a batch of embeddings, predict the bond angle between three atoms
+    """
+    angles = batch.bond_angles
+    angle_embs = torch.cat(
+        [embs[angles[0]], embs[angles[1]], embs[angles[2]]], dim=1
+    ).to(embs.device)
+
+    pred_angles = pred_head(angle_embs).squeeze()
+    true_angles = batch.angle_attr
+    loss = mse_loss(pred_angles, true_angles)
+
+    return loss
