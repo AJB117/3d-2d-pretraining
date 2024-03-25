@@ -149,6 +149,73 @@ class Interactor(nn.Module):
 
         self.interactor = interactor
 
+    def forward_3d(
+        self,
+        x,
+        positions,
+        batch,
+    ):
+        if self.model_3d == "SchNet":
+            x_3d = x
+            if x.dim() != 1:
+                x_3d = x[:, 0]
+
+            assert x_3d.dim() == 1 and x_3d.dtype == torch.long
+            batch = torch.zeros_like(x) if batch is None else batch
+
+        x = self.atom_encoder_3d(x_3d)
+        prev = x
+        for i in range(self.num_interaction_blocks):
+            if self.model_3d == "SchNet":
+                x = self.blocks_3d[i](x, positions, batch)
+
+            x = self.dropouts[i](x)
+            x = self.norm_3d[i](x)
+            x = F.relu(x)
+
+            if self.residual:
+                x = x + prev
+
+            prev = x
+
+        if self.interaction_rep_3d == "com":
+            pass
+        elif self.interaction_rep_3d == "mean":
+            x = global_mean_pool(x, batch)
+        elif self.interaction_rep_3d == "sum":
+            x = global_add_pool(x, batch)
+
+        return x
+
+    def forward_2d(
+        self,
+        x,
+        edge_index,
+        edge_attr,
+        batch,
+    ):
+        x = self.atom_encoder_2d(x)
+        prev = x
+        for i in range(self.num_interaction_blocks):
+            x = self.blocks_2d[i](x, edge_index, edge_attr)
+            x = self.dropouts[i](x)
+            x = self.norm_2d[i](x)
+            x = F.relu(x)
+
+            if self.residual:
+                x = x + prev
+
+            prev = x
+
+        if self.interaction_rep_2d == "vnode":
+            pass
+        elif self.interaction_rep_2d == "mean":
+            x = global_mean_pool(x, batch)
+        elif self.interaction_rep_2d == "sum":
+            x = global_add_pool(x, batch)
+
+        return x
+
     def forward(
         self,
         x,
