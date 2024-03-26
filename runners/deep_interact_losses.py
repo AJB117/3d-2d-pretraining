@@ -1,3 +1,4 @@
+import pdb
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -6,6 +7,7 @@ from torch_geometric.utils import batched_negative_sampling
 mae_loss = nn.L1Loss()
 mse_loss = nn.MSELoss()
 bce_loss = nn.BCEWithLogitsLoss()
+ce_loss = nn.CrossEntropyLoss()
 
 
 def interatomic_distance_loss(batch, embs, pred_head, max_samples=10):
@@ -93,7 +95,7 @@ def edge_classification_loss(batch, embs, pred_head):
 
     pos_labels = pos_link_attrs[:, 0]
 
-    loss = bce_loss(pred_pos_links, pos_labels)
+    loss = ce_loss(pred_pos_links, pos_labels)
 
     return loss
 
@@ -104,11 +106,16 @@ def bond_angle_loss(batch, embs, pred_head):
     """
     angles = batch.bond_angles
     angle_embs = torch.cat(
-        [embs[angles[0]], embs[angles[1]], embs[angles[2]]], dim=1
+        [
+            embs[angles[:, 0].long()],
+            embs[angles[:, 1].long()],
+            embs[angles[:, 2].long()],
+        ],
+        dim=1,
     ).to(embs.device)
 
     pred_angles = pred_head(angle_embs).squeeze()
-    true_angles = batch.angle_attr
+    true_angles = angles[:, 3]
     loss = mse_loss(pred_angles, true_angles)
 
     return loss

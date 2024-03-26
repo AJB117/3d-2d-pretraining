@@ -1,3 +1,4 @@
+import pdb
 import wandb
 import os
 import time
@@ -7,6 +8,8 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import warnings
+
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import global_mean_pool
 from tqdm import tqdm
@@ -18,6 +21,7 @@ from Geom3D.models import GNN, Interactor
 from splitters import scaffold_split
 from util import get_num_task, apply_init
 
+warnings.filterwarnings("ignore")
 
 def mean_absolute_error(pred, target):
     return np.mean(np.abs(pred - target))
@@ -444,9 +448,9 @@ if __name__ == "__main__":
     if args.wandb:
         wandb.log(
             {
-                f"{args.task}_finetune_train_mae": train_roc_list[best_val_idx],
-                f"{args.task}_finetune_val_mae": val_roc_list[best_val_idx],
-                f"{args.task}_finetune_test_mae": test_roc_list[best_val_idx],
+                f"{args.dataset}_finetune_train_roc": train_roc_list[best_val_idx],
+                f"{args.dataset}_finetune_val_roc": val_roc_list[best_val_idx],
+                f"{args.dataset}_finetune_test_roc": test_roc_list[best_val_idx],
             }
         )
         wandb.finish()
