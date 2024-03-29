@@ -3,14 +3,15 @@ import os
 
 
 def main_cmd(args, body, task, dir_name):
-    if args.machine == "rivanna":
+    machine = os.popen("hostname").read()
+    if machine.startswith("udc"):
         home_dir = "/home/zqe3cg/3d-2d-pretraining"
         source_str = "source $SCRATCH_DIR/.virtualenvs/3d-pretraining/bin/activate"
         data_path = "data"
-    elif args.machine == "portal01":
+    elif machine.startswith("portal"):
         home_dir = "/u/zqe3cg/3d-2d-pretraining"
         source_str = "source /p/3dpretraining/molecules/bin/activate"
-        data_path="/p/3dpretraining/3d-pretraining/data"
+        data_path = "/p/3dpretraining/3d-pretraining/data"
 
     body += f"""
 #SBATCH --output=\"{home_dir}/{dir_name}/logfiles/{args.mode}_{args.dataset}_{args.job_name}_{task}.log\""""
@@ -74,7 +75,7 @@ def main(args):
 # --- Task related ---
     """
     elif args.machine == "portal01":
-        header = f"""#!/bin/bash -l
+        header = """#!/bin/bash -l
 
 # --- Resource related ---
 #SBATCH --partition="gpu"
@@ -109,7 +110,6 @@ if __name__ == "__main__":
     parser.add_argument("--mode", default="tune")
     parser.add_argument("--num_blocks")
     parser.add_argument("--wandb", action="store_true")
-    parser.add_argument("--machine", default="rivanna")
 
     args = parser.parse_args()
     main(args)
