@@ -2,8 +2,7 @@ import argparse
 import os
 
 
-def main_cmd(args, body, task, dir_name):
-    machine = os.popen("hostname").read()
+def main_cmd(args, body, task, dir_name, machine):
     if machine.startswith("udc"):
         home_dir = "/home/zqe3cg/3d-2d-pretraining"
         source_str = "source $SCRATCH_DIR/.virtualenvs/3d-pretraining/bin/activate"
@@ -60,8 +59,13 @@ def main(args):
         "cv",
         "gap_02",
     ]
+    machine = os.popen("hostname").read()
+    if machine.startswith("udc"):
+        machine = "rivanna"
+    elif machine.startswith("portal"):
+        machine = "portal"
 
-    if args.machine == "rivanna":
+    if machine == "rivanna":
         header = f"""#!/bin/bash -l
 
 # --- Resource related ---
@@ -74,7 +78,7 @@ def main(args):
 
 # --- Task related ---
     """
-    elif args.machine == "portal01":
+    elif machine == "portal":
         header = """#!/bin/bash -l
 
 # --- Resource related ---
@@ -92,8 +96,12 @@ def main(args):
     if not os.path.exists(logfiles_dir):
         os.makedirs(logfiles_dir)
 
+    input_model_file = f"./deep-interact/assets/{args.input_model_file}"
+    if not os.path.exists(input_model_file):
+        raise FileNotFoundError(f"Input model file {input_model_file} does not exist")
+
     for task in tasks:
-        main_body = main_cmd(args, "", task, dir_name)
+        main_body = main_cmd(args, "", task, dir_name, machine)
         with open(f"{dir_name}/{args.output_model_name}_{task}.sh", "w+") as f:
             f.write(header)
             f.write(main_body)
