@@ -47,6 +47,7 @@ def main(args):
     tasks = [
         "mu",
         "alpha",
+        "gap",
         "homo",
         "lumo",
         "r2",
