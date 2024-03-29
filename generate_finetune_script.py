@@ -6,9 +6,11 @@ def main_cmd(args, body, task, dir_name):
     if args.machine == "rivanna":
         home_dir = "/home/zqe3cg/3d-2d-pretraining"
         source_str = "source $SCRATCH_DIR/.virtualenvs/3d-pretraining/bin/activate"
+        data_path = "data"
     elif args.machine == "portal01":
         home_dir = "/u/zqe3cg/3d-2d-pretraining"
         source_str = "source /p/3dpretraining/molecules/bin/activate"
+        data_path="/p/3dpretraining/3d-pretraining/data"
 
     body += f"""
 #SBATCH --output=\"{home_dir}/{dir_name}/logfiles/{args.mode}_{args.dataset}_{args.job_name}_{task}.log\""""
@@ -32,7 +34,7 @@ echo "STARTIME $i $(date)"
     body += f"""
 cd ../../;
 
-PYTHONPATH='.' python3 runners/finetune_QM9_deep_interact.py --task=gap --input_data_dir=data --dataset={args.dataset} --epochs 1000 --output_model_dir ./deep-interact/assets  --lr_scheduler CosineAnnealingLR --batch_size 128 --verbose --num_workers {args.num_workers} --mode method --model_3d SchNet --model_2d GIN --num_interaction_blocks {args.num_blocks} --output_model_name {args.output_model_name}_{task} --interaction_rep_2d mean --interaction_rep_3d mean --interaction_agg cat --final_pool cat --mode method --emb_dim 300 --lr 1e-4 --layer_norm --residual --initialization glorot_normal --input_model_file ./deep-interact/assets/{args.input_model_file} --no_verbose {'--wandb' if args.wandb else ""}"""
+PYTHONPATH='.' python3 runners/finetune_QM9_deep_interact.py --task={task} --input_data_dir={data_path} --dataset={args.dataset} --epochs 1000 --output_model_dir ./deep-interact/assets  --lr_scheduler CosineAnnealingLR --batch_size 128 --verbose --num_workers {args.num_workers} --mode method --model_3d SchNet --model_2d GIN --num_interaction_blocks {args.num_blocks} --output_model_name {args.output_model_name}_{task} --interaction_rep_2d mean --interaction_rep_3d mean --interaction_agg cat --final_pool cat --mode method --emb_dim 300 --lr 1e-4 --layer_norm --residual --initialization glorot_normal --input_model_file ./deep-interact/assets/{args.input_model_file} --no_verbose {'--wandb' if args.wandb else ""}"""
 
     body += """
 echo "ENDTIME $i $(date)"
