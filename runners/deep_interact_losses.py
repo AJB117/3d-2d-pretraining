@@ -85,17 +85,15 @@ def edge_classification_loss(batch, embs, pred_head):
     """
     Given a batch of embeddings, predict the bond type between two atoms
     """
-    pos_links = batch.edge_index
-    pos_link_attrs = batch.edge_attr
-    pos_link_embs = torch.cat([embs[pos_links[0]], embs[pos_links[1]]], dim=1).to(
-        embs.device
-    )
+    edges = batch.edge_index
+    edge_attrs = batch.edge_attr
+    edge_embs = torch.cat([embs[edges[0]], embs[edges[1]]], dim=1).to(embs.device)
 
-    pred_pos_links = pred_head(pos_link_embs).squeeze()
+    pred = pred_head(edge_embs).squeeze()
 
-    pos_labels = pos_link_attrs[:, 0]
+    pos_labels = edge_attrs[:, 0]
 
-    loss = ce_loss(pred_pos_links, pos_labels)
+    loss = ce_loss(pred, pos_labels)
 
     return loss
 
