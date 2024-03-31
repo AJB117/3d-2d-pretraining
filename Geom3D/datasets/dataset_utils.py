@@ -115,7 +115,7 @@ def mol_to_graph_data_obj_simple_2D(mol, max_num_nodes=50):
         positions=torch.empty((0, 3), dtype=torch.float),
         bond_lengths=torch.empty((0, 1), dtype=torch.float),
         bond_angles=torch.empty((0, 4), dtype=torch.float),
-        angle_directions=torch.empty((0, 1), dtype=torch.long),
+        angle_directions=torch.empty((0,), dtype=torch.long),
     )
     return data
 
@@ -261,9 +261,8 @@ def mol_to_graph_data_obj_simple_3D(
             get_complement_angles=get_complement_angles,
         )
 
-        # set the bond angles to 180 degrees if there are fewer than 2 bonds
         if bond_angles.numel() == 0:
-            bond_angles = torch.tensor([[0, 0, 0, np.pi]], dtype=torch.float32)
+            bond_angles = torch.tensor([[0, 1, 0, np.pi]], dtype=torch.float32)
             angle_directions = torch.tensor([0], dtype=torch.long)
 
     else:  # mol has no bonds
@@ -272,7 +271,8 @@ def mol_to_graph_data_obj_simple_3D(
         edge_attr = torch.empty((0, num_bond_features), dtype=torch.long)
         bond_lengths = torch.empty((0, 1), dtype=torch.float)
         bond_angles = torch.empty((0, 4), dtype=torch.float)
-        angle_directions = torch.empty((0, 1), dtype=torch.long)
+        # angle_directions = torch.empty((0, 1), dtype=torch.long)
+        angle_directions = torch.empty((0,), dtype=torch.long)
 
     data = Data(
         x=x,

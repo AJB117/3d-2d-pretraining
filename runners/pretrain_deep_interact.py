@@ -15,7 +15,7 @@ import warnings
 from tqdm import tqdm
 from torch_geometric.loader import DataLoader
 
-from Geom3D.datasets import Molecule3DDataset, MoleculeDatasetQM9
+from Geom3D.datasets import Molecule3DDataset, MoleculeDatasetQM9, PCQM4Mv2
 from Geom3D.models import Interactor
 from config import args
 from ogb.utils.features import get_atom_feature_dims
@@ -29,6 +29,21 @@ from deep_interact_losses import (
 )
 
 warnings.filterwarnings("ignore")
+
+
+def split(dataset):
+    split_idx = dataset.get_idx_split()  # only use the train/valid/test-dev splits for fine-tuning, otherwise use the train set
+
+    train_idx = split_idx["train"]
+    val_idx = split_idx["valid"]
+    test_idx = split_idx["valid"]
+
+    train_dataset = dataset[train_idx]
+    valid_dataset = dataset[val_idx]
+    test_dataset = dataset[test_idx]
+
+    print(len(train_dataset), "\t", len(valid_dataset), "\t", len(test_dataset))
+    return train_dataset, valid_dataset, test_dataset
 
 
 # From GPT-4
@@ -57,6 +72,7 @@ ogb_feat_dim[-1] = 0
 mae_loss = nn.L1Loss()
 mse_loss = nn.MSELoss()
 bce_loss = nn.BCEWithLogitsLoss()
+n_bond_types = 4
 
 
 def compute_accuracy(pred, target):
@@ -159,7 +175,7 @@ def create_pretrain_heads(task, intermediate_dim, device):
             nn.Linear(intermediate_dim * 2, intermediate_dim),
             normalizer,
             nn.ReLU(),
-            nn.Linear(intermediate_dim, 3),
+            nn.Linear(intermediate_dim, n_bond_types),
         )
 
     return pred_head.to(device)
@@ -315,35 +331,32 @@ def main():
         VirtualNodeMol() if args.interaction_rep_3d in ("com", "const_radius") else None
     )
     data_root = "{}/{}".format(args.input_data_dir, args.dataset)
-    try:
-        dataset = Molecule3DDataset(
-            data_root,
-            args.dataset,
-            mask_ratio=args.SSL_masking_ratio,
-            remove_center=True,
-            use_extend_graph=args.use_extend_graph,
-            transform=transform,
-        )
-    except FileNotFoundError:
-        if args.dataset == "QM9":
-            data_root = "data/molecule_datasets/{}".format(args.dataset)
+    if args.dataset == "QM9":
+        data_root = "data/molecule_datasets/{}".format(args.dataset)
+        use_pure_atomic_num = False
+        if args.model_3d == "EGNN":
             use_pure_atomic_num = False
-            if args.model_3d == "EGNN":
-                use_pure_atomic_num = False
-            MoleculeDatasetQM9(
-                data_root,
-                dataset=args.dataset,
-                task=args.task,
-                use_pure_atomic_num=use_pure_atomic_num,
-            )
-        dataset = Molecule3DDataset(
+
+        dataset = MoleculeDatasetQM9(
             data_root,
-            args.dataset,
-            mask_ratio=args.SSL_masking_ratio,
-            remove_center=True,
-            use_extend_graph=args.use_extend_graph,
-            transform=transform,
+            dataset=args.dataset,
+            task=args.task,
+            use_pure_atomic_num=use_pure_atomic_num,
         )
+
+        # dataset = Molecule3DDataset(
+        #     data_root,
+        #     args.dataset,
+        #     mask_ratio=args.SSL_masking_ratio,
+        #     remove_center=True,
+        #     use_extend_graph=args.use_extend_graph,
+        #     transform=transform,
+        # )
+    elif args.dataset == "PCQM4Mv2":
+        base_dataset = PCQM4Mv2(data_root, transform=None)
+        dataset, _, _ = split(base_dataset)
+
+    print("# data points: ", len(dataset))
 
     loader = DataLoader(
         dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers
@@ -429,6 +442,8 @@ def main():
     model_param_group.append(
         {"params": model.blocks_3d.parameters(), "lr": args.lr * args.gnn_3d_lr_scale}
     )
+
+    print("# parameters: ", sum(p.numel() for p in model.parameters()))
 
     optimizer = optim.Adam(model_param_group, lr=args.lr, weight_decay=args.decay)
     optimal_loss = 1e10
