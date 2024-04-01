@@ -237,7 +237,10 @@ def pretrain(
             ):
                 if task_2d == "interatomic_dist":
                     new_loss = interatomic_distance_loss(
-                        batch, midstream, pred_head, max_samples=25
+                        batch,
+                        midstream,
+                        pred_head,
+                        max_samples=args.pretrain_link_samples,
                     )
                     loss += new_loss
                 elif task_2d == "bond_angle":
@@ -252,7 +255,10 @@ def pretrain(
             ):
                 if task_3d == "edge_existence":
                     new_loss = edge_existence_loss(
-                        batch, midstream, pred_head, neg_samples=25
+                        batch,
+                        midstream,
+                        pred_head,
+                        neg_samples=args.pretrain_link_samples,
                     )
                     loss += new_loss
                 elif task_3d == "edge_classification":

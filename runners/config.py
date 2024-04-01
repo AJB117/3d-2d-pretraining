@@ -111,7 +111,8 @@ parser.add_argument("--gmvp_schnet_lr_scale", type=float, default=0.1)
 parser.add_argument("--gnn_3d_lr_scale", type=float, default=1)
 
 ### for masking
-parser.add_argument("--SSL_masking_ratio", type=float, default=0.15)
+# parser.add_argument("--SSL_masking_ratio", type=float, default=0.15) # for prev methods
+parser.add_argument("--SSL_masking_ratio", type=float, default=0)
 
 parser.add_argument("--T", type=float, default=0.1)
 parser.add_argument("--normalize", dest="normalize", action="store_true")
@@ -265,6 +266,13 @@ parser.add_argument(
     action="store_true",
     help="use 2d layers only",
 )
+parser.add_argument(
+    "pretrain_link_samples",
+    type=int,
+    help="number of samples for pretraining for interatomic distances and edge existence",
+    default=25,
+)
+
 
 args = parser.parse_args()
 print("arguments\t", args)
