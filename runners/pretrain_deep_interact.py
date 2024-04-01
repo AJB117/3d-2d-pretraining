@@ -237,7 +237,7 @@ def pretrain(
             ):
                 if task_2d == "interatomic_dist":
                     new_loss = interatomic_distance_loss(
-                        batch, midstream, pred_head, max_samples=-1
+                        batch, midstream, pred_head, max_samples=25
                     )
                     loss += new_loss
                 elif task_2d == "bond_angle":
@@ -251,7 +251,9 @@ def pretrain(
                 tasks_3d, pretrain_heads_3d, midstream_3d_outs
             ):
                 if task_3d == "edge_existence":
-                    new_loss = edge_existence_loss(batch, midstream, pred_head)
+                    new_loss = edge_existence_loss(
+                        batch, midstream, pred_head, neg_samples=25
+                    )
                     loss += new_loss
                 elif task_3d == "edge_classification":
                     new_loss = edge_classification_loss(batch, midstream, pred_head)
@@ -259,7 +261,6 @@ def pretrain(
 
                 loss_terms.append(new_loss)
                 loss_dict[task_3d] += new_loss.item()
-
         elif args.pretraining_strategy == "masking":
             pass  # ! TODO: Implement masking strategy
 
