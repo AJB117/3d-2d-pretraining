@@ -3,11 +3,11 @@ import os
 
 
 def main_cmd(args, body, task, dir_name, machine):
-    if machine.startswith("udc"):
+    if machine == "rivanna":
         home_dir = "/home/zqe3cg/3d-2d-pretraining"
         source_str = "source $SCRATCH_DIR/.virtualenvs/3d-pretraining/bin/activate"
         data_path = "data"
-    elif machine.startswith("portal"):
+    elif machine == "portal":
         home_dir = "/u/zqe3cg/3d-2d-pretraining"
         source_str = "source /p/3dpretraining/molecules/bin/activate"
         data_path = "/p/3dpretraining/3d-pretraining/data"
@@ -106,6 +106,7 @@ def main(args):
             f.write(header)
             f.write(main_body)
 
+    print(f"Saved all scripts to {dir_name}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
