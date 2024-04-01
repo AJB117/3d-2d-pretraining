@@ -109,6 +109,8 @@ def save_model(
             args.output_model_dir, f"{model_name}_complete_final.pth"
         )
 
+    print(f"Saving model to {output_model_path}")
+
     torch.save(saver_dict, output_model_path)
 
 
@@ -240,7 +242,7 @@ def pretrain(
                         batch,
                         midstream,
                         pred_head,
-                        max_samples=args.pretrain_link_samples,
+                        max_samples=args.pretrain_interatomic_samples,
                     )
                     loss += new_loss
                 elif task_2d == "bond_angle":
@@ -258,7 +260,7 @@ def pretrain(
                         batch,
                         midstream,
                         pred_head,
-                        neg_samples=args.pretrain_link_samples,
+                        neg_samples=args.pretrain_neg_link_samples,
                     )
                     loss += new_loss
                 elif task_3d == "edge_classification":
