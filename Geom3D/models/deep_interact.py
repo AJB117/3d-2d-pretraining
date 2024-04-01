@@ -107,8 +107,14 @@ class Interactor(nn.Module):
         if model_3d == "SchNet":
             self.atom_encoder_3d = nn.Embedding(num_node_class, emb_dim)
             self.atomic_mass = torch.from_numpy(ase.data.atomic_masses).to(device)
+
+            self.lin1 = nn.Linear(emb_dim, emb_dim)
+            self.schnet_act = ShiftedSoftplus()
+            self.lin2 = nn.Linear(emb_dim, emb_dim)
+
             block_3d = SchNetBlock(
-                hidden_channels=emb_dim, initializer=args.initialization
+                hidden_channels=emb_dim,
+                initializer=args.initialization,
             )
 
         self.blocks_3d = nn.ModuleList(
@@ -171,7 +177,7 @@ class Interactor(nn.Module):
 
             x = self.dropouts[i](x)
             x = self.norm_3d[i](x)
-            x = F.relu(x)
+            # x = F.relu(x)
 
             if self.residual:
                 x = x + prev
@@ -199,8 +205,8 @@ class Interactor(nn.Module):
         for i in range(self.num_interaction_blocks):
             x = self.blocks_2d[i](x, edge_index, edge_attr)
             x = self.dropouts[i](x)
-            x = self.norm_2d[i](x)
-            x = F.relu(x)
+            # x = self.norm_2d[i](x)
+            # x = F.relu(x)
 
             if self.residual:
                 x = x + prev
@@ -266,6 +272,7 @@ class Interactor(nn.Module):
                 x_3d = self.blocks_3d[i](x_3d, positions, batch)
             x_3d = self.dropouts[i](x_3d)
             x_3d = self.norm_3d[i](x_3d)
+
             # x_3d = F.relu(x_3d)
 
             if self.residual:
@@ -298,6 +305,11 @@ class Interactor(nn.Module):
 
             # x_2d[virt_mask] = virt_emb_2d
             # x_3d[virt_mask] = virt_emb_3d
+
+        if self.model_3d == "SchNet":
+            x_3d = self.lin1(x_3d)
+            x_3d = self.schnet_act(x_3d)
+            x_3d = self.lin2(x_3d)
 
         if self.interaction_rep_2d == "vnode":
             rep_2d = x_2d[virt_mask]
@@ -380,16 +392,6 @@ class SchNetBlock(nn.Module):
         self.interaction = InteractionBlock(
             hidden_channels, num_gaussians, num_filters, cutoff
         )
-        self.lin1 = nn.Linear(hidden_channels, hidden_channels)
-        self.act = ShiftedSoftplus()
-        self.lin2 = nn.Linear(hidden_channels, hidden_channels)
-
-        # nn.init.xavier_uniform_(self.lin1.weight)
-        apply_init(initializer)(self.lin1.weight)
-        nn.init.zeros_(self.lin1.bias)
-        # nn.init.xavier_uniform_(self.lin2.weight)
-        apply_init(initializer)(self.lin2.weight)
-        nn.init.zeros_(self.lin2.bias)
 
     def forward(self, h, pos, batch=None):
         edge_index = radius_graph(pos, r=self.cutoff, batch=batch)
@@ -398,9 +400,5 @@ class SchNetBlock(nn.Module):
         edge_attr = self.distance_expansion(edge_weight)
 
         h = self.interaction(h, edge_index, edge_weight, edge_attr)
-
-        h = self.lin1(h)
-        h = self.act(h)
-        h = self.lin2(h)
 
         return h

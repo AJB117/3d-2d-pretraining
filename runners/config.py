@@ -267,12 +267,17 @@ parser.add_argument(
     help="use 2d layers only",
 )
 parser.add_argument(
-    "pretrain_link_samples",
+    "--pretrain_interatomic_samples",
     type=int,
     help="number of samples for pretraining for interatomic distances and edge existence",
-    default=25,
+    default=-1,
 )
-
+parser.add_argument(
+    "--pretrain_neg_link_samples",
+    type=int,
+    help="number of samples for pretraining for interatomic distances and edge existence",
+    default=50,
+)
 
 args = parser.parse_args()
 print("arguments\t", args)
