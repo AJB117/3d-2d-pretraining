@@ -148,7 +148,7 @@ def model_setup():
 
 def load_model(model, model_weight_file, model_3d=None, model_2d=None):
     print("Loading from {}".format(model_weight_file))
-    model_weights = torch.load(model_weight_file)
+    model_weights = torch.load(model_weight_file, map_location=device)
     if args.mode == "method":  # as opposed to baseline
         model.load_state_dict(model_weights["model"])
     return
