@@ -1,25 +1,14 @@
-import pdb
+import ase
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch_geometric.nn import (
-    GlobalAttention,
-    MessagePassing,
-    Set2Set,
     global_add_pool,
-    global_max_pool,
     global_mean_pool,
     radius_graph,
 )
-from torch_geometric.nn.inits import glorot, zeros
-from torch_geometric.utils import add_self_loops, degree, softmax
-from torch_scatter import scatter_add
 from .encoders import AtomEncoder
-from typing import List
 from .molecule_gnn_model import GINConv, GATConv, GCNConv, GraphSAGEConv
 from .schnet import InteractionBlock, GaussianSmearing, ShiftedSoftplus
-from torch_scatter import scatter
-import ase
 from runners.util import apply_init
 
 
