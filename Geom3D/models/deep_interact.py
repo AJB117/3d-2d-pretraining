@@ -112,13 +112,16 @@ class Interactor(nn.Module):
             self.schnet_act = ShiftedSoftplus()
             self.lin2 = nn.Linear(emb_dim, emb_dim)
 
-            block_3d = SchNetBlock(
-                hidden_channels=emb_dim,
-                initializer=args.initialization,
-            )
+            block_3d = SchNetBlock
 
         self.blocks_3d = nn.ModuleList(
-            [block_3d for _ in range(num_interaction_blocks)]
+            [
+                block_3d(
+                    hidden_channels=emb_dim,
+                    initializer=args.initialization,
+                )
+                for _ in range(num_interaction_blocks)
+            ]
         )
 
         self.blocks_2d = nn.ModuleList(
