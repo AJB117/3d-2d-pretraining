@@ -106,8 +106,7 @@ class Interactor(nn.Module):
         self.blocks_3d = nn.ModuleList(
             [
                 block_3d(
-                    hidden_channels=emb_dim,
-                    initializer=args.initialization,
+                    hidden_channels=emb_dim
                 )
                 for _ in range(num_interaction_blocks)
             ]
@@ -369,15 +368,12 @@ class SchNetBlock(nn.Module):
         self,
         hidden_channels=128,
         num_filters=128,
-        num_interactions=6,
         num_gaussians=50,
         cutoff=10.0,
-        initializer="glorot",
     ):
         super(SchNetBlock, self).__init__()
         self.hidden_channels = hidden_channels
         self.num_filters = num_filters
-        self.num_interactions = num_interactions
         self.num_gaussians = num_gaussians
         self.cutoff = cutoff
         self.distance_expansion = GaussianSmearing(0.0, cutoff, num_gaussians)
