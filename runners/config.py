@@ -291,6 +291,11 @@ parser.add_argument(
     default="config.pickle",
     help="name of saved config file, leave blank if you don't want to save",
 )
+parser.add_argument(
+    "--just_save_config",
+    action="store_true",
+    help="just save config, exit after saving",
+)
 
 args = parser.parse_args()
 
@@ -298,11 +303,17 @@ if args.config:
     with open(args.config, "r") as f:
         argdict = yaml.load(f, yaml.FullLoader)
         for key in argdict:
+            if key == "just_save_config":
+                continue
             setattr(args, key, argdict[key])
 
 if args.save_config_name:
     with open(args.save_config_name + ".yml", "w") as f:
         args.config = args.save_config_name + ".yml"
         yaml.dump(vars(args), f)
+
+if args.just_save_config:
+    print("config saved to", args.save_config_name + ".yml")
+    exit()
 
 print("arguments\t", args)
