@@ -1,3 +1,5 @@
+import sys
+import os
 import yaml
 import argparse
 from email.policy import default
@@ -23,7 +25,7 @@ parser.add_argument(
 
 # about dataset and dataloader
 parser.add_argument("--dataset", type=str, default="QM9")
-parser.add_argument("--task", type=str, default="alpha")
+parser.add_argument("--task", type=str)
 parser.add_argument("--num_workers", type=int, default=0)
 
 # for MD17
@@ -280,40 +282,59 @@ parser.add_argument(
     default=50,
 )
 parser.add_argument(
-    "--config",
+    "--config_dir",
+    type=str,
+    default="./deep-interact/configs",
+    help="dir to save config file",
+)
+parser.add_argument(
+    "--config_name",
     type=str,
     default="",
-    help="path to saved config dict, leave blank if you want to use manually set args",
+    help="name of config file, leave blank if you want to use manually set args",
 )
-parser.add_argument(
-    "--save_config_name",
-    type=str,
-    default="config.pickle",
-    help="name of saved config file, leave blank if you don't want to save",
-)
-parser.add_argument(
-    "--just_save_config",
-    action="store_true",
-    help="just save config, exit after saving",
-)
+parser.add_argument("--save_config", action="store_true", help="save config file")
 
 args = parser.parse_args()
 
-if args.config:
-    with open(args.config, "r") as f:
+if args.config_dir and args.config_name:
+    with open(os.path.join(args.config_dir, args.config_name), "r") as f:
         argdict = yaml.load(f, yaml.FullLoader)
         for key in argdict:
-            if key == "just_save_config":
-                continue
             setattr(args, key, argdict[key])
 
-if args.save_config_name:
-    with open(args.save_config_name + ".yml", "w") as f:
-        args.config = args.save_config_name + ".yml"
-        yaml.dump(vars(args), f)
+elif args.save_config:
+    if not os.path.exists(args.config_dir):
+        os.makedirs(args.config_dir)
 
-if args.just_save_config:
-    print("config saved to", args.save_config_name + ".yml")
-    exit()
+    args.config_name = args.output_model_name
 
-print("arguments\t", args)
+    if not args.config_name.endswith(".yml"):
+        args.config_name = args.config_name + ".yml"
+
+        flags = ""
+        for k, v in vars(args).items():
+            if k in ["config_dir", "config_name", "save_config"]:
+                continue
+            if isinstance(v, bool):
+                if not v:
+                    continue
+                flags += f"--{k} "
+
+            elif isinstance(v, list):
+                flags += f"--{k} {' '.join(map(str, v))} "
+            else:
+                flags += f"--{k} {v} "
+
+        args.flags = flags
+
+    config_path = os.path.join(args.config_dir, args.dataset + "_" + args.config_name)
+
+    with open(config_path, "w") as f:
+        args_dict = vars(args)
+        yaml.dump(args_dict, f)
+
+    print(config_path)
+
+if not args.save_config:
+    print("arguments\t", args)
