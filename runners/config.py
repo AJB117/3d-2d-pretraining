@@ -1,3 +1,4 @@
+import yaml
 import argparse
 from email.policy import default
 
@@ -278,6 +279,30 @@ parser.add_argument(
     help="number of samples for pretraining for interatomic distances and edge existence",
     default=50,
 )
+parser.add_argument(
+    "--config",
+    type=str,
+    default="",
+    help="path to saved config dict, leave blank if you want to use manually set args",
+)
+parser.add_argument(
+    "--save_config_name",
+    type=str,
+    default="config.pickle",
+    help="name of saved config file, leave blank if you don't want to save",
+)
 
 args = parser.parse_args()
+
+if args.config:
+    with open(args.config, "r") as f:
+        argdict = yaml.load(f, yaml.FullLoader)
+        for key in argdict:
+            setattr(args, key, argdict[key])
+
+if args.save_config_name:
+    with open(args.save_config_name + ".yml", "w") as f:
+        args.config = args.save_config_name + ".yml"
+        yaml.dump(vars(args), f)
+
 print("arguments\t", args)
