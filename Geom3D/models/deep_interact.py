@@ -71,7 +71,7 @@ class Interactor(nn.Module):
         interaction_rep_2d="vnode",
         interaction_rep_3d="com",
         num_node_class=119,
-        device="cpu",
+        device="cuda",
         batch_norm=True,
         layer_norm=False,
         dropout=0.0,
@@ -104,12 +104,7 @@ class Interactor(nn.Module):
             block_3d = SchNetBlock
 
         self.blocks_3d = nn.ModuleList(
-            [
-                block_3d(
-                    hidden_channels=emb_dim
-                )
-                for _ in range(num_interaction_blocks)
-            ]
+            [block_3d(hidden_channels=emb_dim) for _ in range(num_interaction_blocks)]
         )
 
         self.blocks_2d = nn.ModuleList(

@@ -17,6 +17,43 @@ from .encoders import AtomEncoder, BondEncoder
 from typing import List
 
 
+class TransformerConv(MessagePassing):
+    def __init__(self, emb_dim, heads=4, negative_slope=0.2, aggr="add"):
+        super(TransformerConv, self).__init__(node_dim=0)
+        self.aggr = aggr
+        self.heads = heads
+        self.emb_dim = emb_dim
+
+        self.weight_linear = nn.Linear(emb_dim, heads * emb_dim)
+        self.att = nn.Parameter(torch.Tensor(1, heads, 2 * emb_dim))
+
+        self.bias = nn.Parameter(torch.Tensor(emb_dim))
+        self.bond_encoder = BondEncoder(emb_dim=heads * emb_dim)
+
+    def forward(self, x, edge_index, edge_attr):
+        edge_embedding = self.bond_encoder(edge_attr)
+
+        x = self.weight_linear(x)
+        return self.propagate(edge_index, x=x, edge_attr=edge_embedding)
+
+    def message(self, edge_index, x_i, x_j, edge_attr):
+        x_i = x_i.view(-1, self.heads, self.emb_dim)
+        x_j = x_j.view(-1, self.heads, self.emb_dim)
+        edge_attr = edge_attr.view(-1, self.heads, self.emb_dim)
+        x_j += edge_attr
+
+        alpha = (torch.cat([x_i, x_j], dim=-1) * self.att).sum(dim=-1)
+        alpha = F.relu(alpha)
+        alpha = softmax(alpha, edge_index[0])
+
+        return x_j * alpha.view(-1, self.heads, 1)
+
+    def update(self, aggr_out):
+        aggr_out = aggr_out.mean(dim=1)
+        aggr_out += self.bias
+        return aggr_out
+
+
 class GINConv(MessagePassing):
     def __init__(self, emb_dim):
         super(GINConv, self).__init__(aggr="add")
@@ -239,6 +276,8 @@ class GNN(nn.Module):
                 self.gnns.append(GATConv(emb_dim))
             elif gnn_type == "GraphSAGE":
                 self.gnns.append(GraphSAGEConv(emb_dim))
+            elif gnn_type == "Transformer":
+                self.gnns.append(TransformerConv(emb_dim))
 
         ###List of batchnorms
         self.batch_norms = nn.ModuleList()
