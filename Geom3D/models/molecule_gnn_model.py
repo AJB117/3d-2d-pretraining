@@ -18,9 +18,8 @@ from typing import List
 
 
 class TransformerConv(MessagePassing):
-    def __init__(self, emb_dim, heads=4, negative_slope=0.2, aggr="add"):
+    def __init__(self, emb_dim, heads=4):
         super(TransformerConv, self).__init__(node_dim=0)
-        self.aggr = aggr
         self.heads = heads
         self.emb_dim = emb_dim
 
