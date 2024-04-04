@@ -7,7 +7,13 @@ from torch_geometric.nn import (
     radius_graph,
 )
 from .encoders import AtomEncoder
-from .molecule_gnn_model import GINConv, GATConv, GCNConv, GraphSAGEConv
+from .molecule_gnn_model import (
+    GINConv,
+    GATConv,
+    GCNConv,
+    GraphSAGEConv,
+    TransformerConv,
+)
 from .schnet import InteractionBlock, GaussianSmearing, ShiftedSoftplus
 from runners.util import apply_init
 
@@ -348,6 +354,8 @@ class Block2D(nn.Module):
             layer = GCNConv(self.emb_dim, self.emb_dim)
         elif gnn_type == "GraphSAGE":
             layer = GraphSAGEConv(self.emb_dim, self.emb_dim)
+        elif gnn_type == "Transformer":
+            layer = TransformerConv(self.emb_dim, heads=args.transformer_heads)
         else:
             raise ValueError("Invalid GNN type")
 
