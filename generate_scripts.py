@@ -44,7 +44,7 @@ PYTHONPATH='.' python3 runners/finetune_QM9_deep_interact.py --config_dir {sweep
 cd ../../;
 PYTHONPATH='.' python3 runners/finetune_MoleculeNet_deep_interact.py --config_dir {sweep_dir} --config_name {config_name}"""
 
-    body += "\necho 'ENDTIME $i $(date)'"
+    body += '\necho "ENDTIME $i $(date)"'
 
     return body
 
