@@ -89,6 +89,7 @@ def save_model(
     pretrained_heads_2d=None,
     pretrained_heads_3d=None,
     optimal_loss=1e10,
+    epoch=0,
 ):
     if args.output_model_dir == "":
         return
@@ -98,6 +99,7 @@ def save_model(
         "model": model.state_dict(),
         "pretrained_heads_2d": [head.state_dict() for head in pretrained_heads_2d],
         "pretrained_heads_3d": [head.state_dict() for head in pretrained_heads_3d],
+        "epoch": epoch,
     }
     if save_best:
         print("save model with total loss: {:.5f}\n".format(optimal_loss))
@@ -312,6 +314,7 @@ def pretrain(
             pretrained_heads_2d=pretrain_heads_2d,
             pretrained_heads_3d=pretrain_heads_3d,
             optimal_loss=optimal_loss,
+            epoch=epoch,
         )
 
     loss_dict["optimal_loss"] = optimal_loss
@@ -430,10 +433,23 @@ def main():
         if isinstance(layer, nn.Linear):
             nn.init.xavier_uniform_(layer.weight)
 
+    epoch_start = 1
+
     if args.input_model_file != "":
-        model_weight = torch.load(args.input_model_file)
-        model.load_state_dict(model_weight["model"])
-        print("successfully loaded model checkpoint")
+        saver_dict = torch.load(args.input_model_file)
+        model.load_state_dict(saver_dict["model"])
+        graph_pred_mlp.load_state_dict(saver_dict["graph_pred_mlp"])
+        for head, pretrained_head in zip(
+            pretrain_heads_2d, saver_dict["pretrained_heads_2d"]
+        ):
+            head.load_state_dict(pretrained_head)
+        for head, pretrained_head in zip(
+            pretrain_heads_3d, saver_dict["pretrained_heads_3d"]
+        ):
+            head.load_state_dict(pretrained_head)
+        epoch_start = saver_dict["epoch"]
+
+        print("successfully loaded model checkpoint to resume pretraining with")
 
     model_param_group = []
 
@@ -499,7 +515,7 @@ def main():
             config=args_dict,
         )
 
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(epoch_start, args.epochs + 1):
         print("epoch: {}".format(epoch))
         loss_dict, optimal_loss = pretrain(
             args,
@@ -566,6 +582,7 @@ def main():
         pretrained_heads_2d=pretrain_heads_2d,
         pretrained_heads_3d=pretrain_heads_3d,
         optimal_loss=optimal_loss,
+        epoch=epoch,
     )
 
     if args.wandb:
