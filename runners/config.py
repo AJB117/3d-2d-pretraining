@@ -20,7 +20,7 @@ parser.add_argument(
     "--model_2d",
     type=str,
     default="GIN",
-    choices=["GIN", "GAT", "GCN", "GraphSAGE"],
+    choices=["GIN", "GAT", "GCN", "GraphSAGE", "Transformer"],
 )
 
 # about dataset and dataloader
@@ -257,6 +257,12 @@ parser.add_argument(
     choices=["geometric", "masking", "both"],
     default="geometric",
     help="pretraining strategy",
+)
+parser.add_argument(
+    "--transformer_heads",
+    default=4,
+    type=int,
+    help="for transformer conv for the 2d model",
 )
 parser.add_argument("--wandb", action="store_true", help="use wandb")
 parser.add_argument(
