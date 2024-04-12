@@ -7,6 +7,9 @@ import torch
 from torch import nn
 from torch_geometric.data import Data
 
+def dot_product(x1, x2) -> torch.Tensor:
+    return (x1 * x2).sum(dim=1)
+
 class EdgeEncoding(nn.Module):
     def __init__(self, edge_dim: int, max_path_distance: int):
         """
