@@ -205,6 +205,32 @@ def get_angles(edges, atom_poses, dir_type="HT", get_complement_angles=False):
     return bond_angles, bond_angle_dirs
 
 
+def get_dihedral_angles(mol, edge_index):
+    # get dihedral angles of bonds using mol information and positions and edge_index
+    conformer = mol.GetConformers()[0]
+    dihedral_angles = []
+    for i in range(edge_index.size(1)):
+        edge = edge_index[:, i]
+        src, dst = edge[0], edge[1]
+        for j in range(edge_index.size(1)):
+            if i == j:
+                continue
+            edge2 = edge_index[:, j]
+            src2, dst2 = edge2[0], edge2[1]
+            if src2 == src or src2 == dst or dst2 == src or dst2 == dst:
+                continue
+            i = src.item()
+            j = dst.item()
+            k = src2.item()
+            l = dst2.item()
+
+            dihedral_angle = Chem.rdMolTransforms.GetDihedralRad(conformer, i, j, k, l)
+            dihedral_angles.append([src, dst, src2, dst2, dihedral_angle])
+
+    dihedral_angles = torch.tensor(dihedral_angles, dtype=torch.float32)
+    return dihedral_angles
+
+
 # 50 atoms is typically good enough for small molecules
 def mol_to_graph_data_obj_simple_3D(
     mol, pure_atomic_num=False, get_complement_angles=False, max_num_nodes=50
@@ -265,6 +291,11 @@ def mol_to_graph_data_obj_simple_3D(
             bond_angles = torch.tensor([[0, 1, 0, np.pi]], dtype=torch.float32)
             angle_directions = torch.tensor([0], dtype=torch.long)
 
+        dihedral_angles = get_dihedral_angles(mol, edge_index)
+
+        if dihedral_angles.numel() == 0 or bond_angles.numel() == 0:
+            dihedral_angles = torch.tensor([[0, 1, 2, 3, 0]], dtype=torch.float32)
+
     else:  # mol has no bonds
         num_bond_features = 3  # bond type & direction
         edge_index = torch.empty((2, 0), dtype=torch.long)
@@ -273,6 +304,7 @@ def mol_to_graph_data_obj_simple_3D(
         bond_angles = torch.empty((0, 4), dtype=torch.float)
         # angle_directions = torch.empty((0, 1), dtype=torch.long)
         angle_directions = torch.empty((0,), dtype=torch.long)
+        dihedral_angles = torch.empty((0, 5), dtype=torch.float)
 
     data = Data(
         x=x,
@@ -282,6 +314,7 @@ def mol_to_graph_data_obj_simple_3D(
         bond_lengths=bond_lengths,
         bond_angles=bond_angles,
         angle_directions=angle_directions,
+        dihedral_angles=dihedral_angles,
     )
     return data, atom_count
 
