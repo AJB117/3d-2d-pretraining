@@ -248,23 +248,32 @@ parser.add_argument(
     help="tasks to pretrain the 3D blocks on, ordered by block",
 )
 parser.add_argument(
+    "--pretrain_2d_task_indices",
+    type=int,
+    nargs="+",
+    default=[0, 1],
+    help="indices of blocks for 2D pretraining tasks. [i, j] means start first task at block i and second task at block j.",
+)
+parser.add_argument(
+    "--pretrain_3d_task_indices",
+    type=int,
+    nargs="+",
+    default=[0, 1],
+    help="indices of blocks for 3D pretraining tasks. [i, j] means start first task at block i and second task at block j.",
+)
+parser.add_argument(
     "--pretrain_2d_balances",
     type=float,
     nargs="+",
     default=[1e-3, 1.0],
-    help="balancing parameters for 2d blocks' tasks so that all losses are on the same scale",
+    help="balancing parameters for 2D blocks' tasks so that all losses are on the same scale",
 )
 parser.add_argument(
     "--pretrain_3d_balances",
     type=float,
     nargs="+",
     default=[1e-1, 10.0],
-    help="balancing parameters for 3d blocks' tasks so that all losses are on the same scale",
-)
-parser.add_argument(
-    "--start_tasks_from_end",
-    action="store_true",
-    help="add each pretraining task to the end of each block",
+    help="balancing parameters for 3D blocks' tasks so that all losses are on the same scale",
 )
 parser.add_argument(
     "--pretrain_strategy",

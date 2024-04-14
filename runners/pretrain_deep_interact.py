@@ -223,6 +223,9 @@ def pretrain(
             require_midstream=True,
         )
 
+        pretrain_2d_task_indices = args.pretrain_2d_task_indices
+        pretrain_3d_task_indices = args.pretrain_3d_task_indices
+
         if args.pretrain_strategy == "geometric":
             tasks_2d = args.pretrain_2d_tasks
             tasks_3d = args.pretrain_3d_tasks
@@ -232,14 +235,11 @@ def pretrain(
             loss_terms = []
             loss = 0
 
-            if args.start_tasks_from_end:
-                pretrain_heads_2d = pretrain_heads_2d[::-1]
-                pretrain_heads_3d = pretrain_heads_3d[::-1]
-                midstream_2d_outs = midstream_2d_outs[::-1]
-                midstream_3d_outs = midstream_3d_outs[::-1]
+            outs_2d = [midstream_2d_outs[i] for i in pretrain_2d_task_indices]
+            outs_3d = [midstream_3d_outs[i] for i in pretrain_3d_task_indices]
 
             for task_2d, pred_head, midstream, balance_2d in zip(
-                tasks_2d, pretrain_heads_2d, midstream_2d_outs, balances_2d
+                tasks_2d, pretrain_heads_2d, outs_2d, balances_2d
             ):
                 if task_2d == "interatomic_dist":
                     new_loss = interatomic_distance_loss(
@@ -257,7 +257,7 @@ def pretrain(
                 loss_dict[task_2d] += new_loss.item()
 
             for task_3d, pred_head, midstream, balance_3d in zip(
-                tasks_3d, pretrain_heads_3d, midstream_3d_outs, balances_3d
+                tasks_3d, pretrain_heads_3d, outs_3d, balances_3d
             ):
                 if task_3d == "edge_existence":
                     new_loss = edge_existence_loss(
