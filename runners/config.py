@@ -300,6 +300,7 @@ parser.add_argument(
     help="name of config file, leave blank if you want to use manually set args",
 )
 parser.add_argument("--save_config", action="store_true", help="save config file")
+parser.add_argument("--diff_interactor_per_block", action="store_true", help="use a different interactor MLP per block")
 
 args = parser.parse_args()
 
