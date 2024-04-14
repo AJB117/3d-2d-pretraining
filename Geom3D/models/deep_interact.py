@@ -8,7 +8,7 @@ from torch_geometric.nn import (
 )
 from .encoders import AtomEncoder
 from .molecule_gnn_model import (
-    GINConv,
+    GINBlock,
     GATConv,
     GCNConv,
     GraphSAGEConv,
@@ -136,16 +136,33 @@ class Interactor(nn.Module):
 
         self.final_pool = final_pool
 
-        interactor = InteractionMLP(
-            emb_dim,
-            dropout=dropout,
-            num_layers=2,
-            interaction_agg=interaction_agg,
-            normalizer=normalizer,
-            initializer=args.initialization,
-        )
+        self.diff_interactor_per_block = args.diff_interactor_per_block
 
-        self.interactor = interactor
+        if self.diff_interactor_per_block:
+            self.interactors = nn.ModuleList(
+                [
+                    InteractionMLP(
+                        emb_dim,
+                        dropout=dropout,
+                        num_layers=2,
+                        interaction_agg=interaction_agg,
+                        normalizer=normalizer,
+                        initializer=args.initialization,
+                    ).to(device)
+                    for _ in range(num_interaction_blocks)
+                ]
+            )
+        else:
+            interactor = InteractionMLP(
+                emb_dim,
+                dropout=dropout,
+                num_layers=2,
+                interaction_agg=interaction_agg,
+                normalizer=normalizer,
+                initializer=args.initialization,
+            )
+
+            self.interactor = interactor
 
     def forward_3d(
         self,
@@ -286,14 +303,17 @@ class Interactor(nn.Module):
             prev_2d = x_2d
             prev_3d = x_3d
 
-            midstream_outs_2d.append(x_2d)
-            midstream_outs_3d.append(x_3d)
-
             # interaction = torch.cat([x_2d, x_3d], dim=-1)
-            interaction = self.interactor(x_2d, x_3d)
+            if self.diff_interactor_per_block:
+                interaction = self.interactors[i](x_2d, x_3d)
+            else:
+                interaction = self.interactor(x_2d, x_3d)
 
             # virt_emb_2d, virt_emb_3d = torch.split(interaction, self.emb_dim, dim=-1)
             x_2d, x_3d = torch.split(interaction, self.emb_dim, dim=-1)
+
+            midstream_outs_2d.append(x_2d)
+            midstream_outs_3d.append(x_3d)
 
             # x_2d[virt_mask] = virt_emb_2d
             # x_3d[virt_mask] = virt_emb_3d
@@ -347,11 +367,11 @@ class Block2D(nn.Module):
 
         layer = None
         if gnn_type == "GIN":
-            layer = GINConv(self.emb_dim)
+            layer = GINBlock(self.emb_dim)
         elif gnn_type == "GAT":
-            layer = GATConv(self.emb_dim, self.emb_dim // 2, heads=args.gat_heads)
+            layer = GATConv(self.emb_dim, heads=args.gat_heads)
         elif gnn_type == "GCN":
-            layer = GCNConv(self.emb_dim, self.emb_dim)
+            layer = GCNConv(self.emb_dim)
         elif gnn_type == "GraphSAGE":
             layer = GraphSAGEConv(self.emb_dim, self.emb_dim)
         elif gnn_type == "Transformer":
