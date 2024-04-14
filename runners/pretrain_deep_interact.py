@@ -226,6 +226,8 @@ def pretrain(
         if args.pretrain_strategy == "geometric":
             tasks_2d = args.pretrain_2d_tasks
             tasks_3d = args.pretrain_3d_tasks
+            balances_2d = args.pretrain_2d_balances
+            balances_3d = args.pretrain_3d_balances
 
             loss_terms = []
             loss = 0
@@ -236,8 +238,8 @@ def pretrain(
                 midstream_2d_outs = midstream_2d_outs[::-1]
                 midstream_3d_outs = midstream_3d_outs[::-1]
 
-            for task_2d, pred_head, midstream in zip(
-                tasks_2d, pretrain_heads_2d, midstream_2d_outs
+            for task_2d, pred_head, midstream, balance_2d in zip(
+                tasks_2d, pretrain_heads_2d, midstream_2d_outs, balances_2d
             ):
                 if task_2d == "interatomic_dist":
                     new_loss = interatomic_distance_loss(
@@ -246,16 +248,16 @@ def pretrain(
                         pred_head,
                         max_samples=args.pretrain_interatomic_samples,
                     )
-                    loss += new_loss
                 elif task_2d == "bond_angle":
                     new_loss = bond_angle_loss(batch, midstream, pred_head)
-                    loss += new_loss
 
+                new_loss = balance_2d * new_loss
+                loss += new_loss
                 loss_terms.append(new_loss)
                 loss_dict[task_2d] += new_loss.item()
 
-            for task_3d, pred_head, midstream in zip(
-                tasks_3d, pretrain_heads_3d, midstream_3d_outs
+            for task_3d, pred_head, midstream, balance_3d in zip(
+                tasks_3d, pretrain_heads_3d, midstream_3d_outs, balances_3d
             ):
                 if task_3d == "edge_existence":
                     new_loss = edge_existence_loss(
@@ -264,13 +266,14 @@ def pretrain(
                         pred_head,
                         neg_samples=args.pretrain_neg_link_samples,
                     )
-                    loss += new_loss
                 elif task_3d == "edge_classification":
                     new_loss = edge_classification_loss(batch, midstream, pred_head)
-                    loss += new_loss
 
+                new_loss = balance_3d * new_loss
+                loss += new_loss
                 loss_terms.append(new_loss)
                 loss_dict[task_3d] += new_loss.item()
+
         elif args.pretraining_strategy == "masking":
             pass  # ! TODO: Implement masking strategy
 

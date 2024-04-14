@@ -237,15 +237,29 @@ parser.add_argument(
     "--pretrain_2d_tasks",
     type=str,
     nargs="+",
-    default=["interatomic_dist"],
+    default=["interatomic_dist", "bond_angle"],
     help="tasks to pretrain the 2D blocks on, ordered by block",
 )
 parser.add_argument(
     "--pretrain_3d_tasks",
     type=str,
     nargs="+",
-    default=["edge_existence"],
+    default=["edge_existence", "edge_classification"],
     help="tasks to pretrain the 3D blocks on, ordered by block",
+)
+parser.add_argument(
+    "--pretrain_2d_balances",
+    type=float,
+    nargs="+",
+    default=[1e-3, 1.0],
+    help="balancing parameters for 2d blocks' tasks so that all losses are on the same scale",
+)
+parser.add_argument(
+    "--pretrain_3d_balances",
+    type=float,
+    nargs="+",
+    default=[1e-1, 10.0],
+    help="balancing parameters for 3d blocks' tasks so that all losses are on the same scale",
 )
 parser.add_argument(
     "--start_tasks_from_end",
@@ -300,7 +314,11 @@ parser.add_argument(
     help="name of config file, leave blank if you want to use manually set args",
 )
 parser.add_argument("--save_config", action="store_true", help="save config file")
-parser.add_argument("--diff_interactor_per_block", action="store_true", help="use a different interactor MLP per block")
+parser.add_argument(
+    "--diff_interactor_per_block",
+    action="store_true",
+    help="use a different interactor MLP per block",
+)
 
 args = parser.parse_args()
 
