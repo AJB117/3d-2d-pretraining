@@ -394,7 +394,11 @@ if __name__ == "__main__":
     model, graph_pred_mlp, model_2d, model_3d = model_setup()
 
     if args.input_model_file != "":
-        load_model(model, args.input_model_file, model_3d=model_3d, model_2d=model_2d)
+        try:
+            load_model(model, args.input_model_file, model_3d=model_3d, model_2d=model_2d)
+        except Exception as e:
+            print(e)
+            print("Failed to load model from {}; fine-tuning from scratch".format(args.input_model_file))
     else:
         print("fine-tuning from scratch...")
 
