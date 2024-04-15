@@ -244,8 +244,6 @@ class Graphormer(nn.Module):
         x = self.node_in_lin(x)
         edge_attr = self.edge_in_lin(edge_attr)
 
-        x = self.centrality_encoding(x, edge_index)
-
         for layer in self.layers:
             x = layer(x, edge_attr, b, edge_paths, ptr)
 
