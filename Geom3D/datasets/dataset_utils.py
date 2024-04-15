@@ -206,26 +206,25 @@ def get_angles(edges, atom_poses, dir_type="HT", get_complement_angles=False):
     return bond_angles, bond_angle_dirs
 
 
-def get_dihedral_angles(mol, edge_index):
+def get_dihedral_angles(mol):
     # get dihedral angles of bonds using mol information and positions and edge_index
     conformer = mol.GetConformers()[0]
     dihedral_angles = []
-    for i in range(edge_index.size(1)):
-        edge = edge_index[:, i]
-        src, dst = edge[0], edge[1]
-        for j in range(edge_index.size(1)):
-            if i == j:
-                continue
-            edge2 = edge_index[:, j]
-            src2, dst2 = edge2[0], edge2[1]
+
+    bonds = mol.GetBonds()
+    for bond in bonds:
+        src, dst = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
+        for bond2 in bonds:
+            src2, dst2 = bond2.GetBeginAtomIdx(), bond2.GetEndAtomIdx()
             if src2 == src or src2 == dst or dst2 == src or dst2 == dst:
                 continue
-            i = src.item()
-            j = dst.item()
-            k = src2.item()
-            l = dst2.item()
+            i = src
+            j = dst
+            k = src2
+            l = dst2
 
             dihedral_angle = Chem.rdMolTransforms.GetDihedralRad(conformer, i, j, k, l)
+            dihedral_angle /= np.pi  # normalize to [0, 1]
             dihedral_angles.append([src, dst, src2, dst2, dihedral_angle])
 
     dihedral_angles = torch.tensor(dihedral_angles, dtype=torch.float32)
@@ -292,7 +291,7 @@ def mol_to_graph_data_obj_simple_3D(
             bond_angles = torch.tensor([[0, 1, 0, np.pi]], dtype=torch.float32)
             angle_directions = torch.tensor([0], dtype=torch.long)
 
-        dihedral_angles = get_dihedral_angles(mol, edge_index)
+        dihedral_angles = get_dihedral_angles(mol)
 
         if dihedral_angles.numel() == 0 or bond_angles.numel() == 0:
             dihedral_angles = torch.tensor([[0, 1, 2, 3, 0]], dtype=torch.float32)
