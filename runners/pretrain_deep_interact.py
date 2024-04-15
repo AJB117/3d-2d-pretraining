@@ -26,6 +26,7 @@ from deep_interact_losses import (
     edge_existence_loss,
     interatomic_distance_loss,
     bond_angle_loss,
+    dihedral_angle_loss
 )
 
 warnings.filterwarnings("ignore")
@@ -174,6 +175,13 @@ def create_pretrain_heads(task, intermediate_dim, device):
             nn.ReLU(),
             nn.Linear(intermediate_dim, 1),
         )
+    elif task == "dihedral_angle":
+        pred_head = nn.Sequential(
+            nn.Linear(intermediate_dim * 4, intermediate_dim),
+            normalizer,
+            nn.ReLU(),
+            nn.Linear(intermediate_dim, 1),
+        )
     elif task == "edge_classification":
         pred_head = nn.Sequential(
             nn.Linear(intermediate_dim * 2, intermediate_dim),
@@ -250,6 +258,8 @@ def pretrain(
                     )
                 elif task_2d == "bond_angle":
                     new_loss = bond_angle_loss(batch, midstream, pred_head)
+                elif task_2d == "dihedral_angle":
+                    new_loss = dihedral_angle_loss(batch, midstream, pred_head)
 
                 new_loss = balance_2d * new_loss
                 loss += new_loss

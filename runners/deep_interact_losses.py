@@ -117,3 +117,25 @@ def bond_angle_loss(batch, embs, pred_head):
     loss = mse_loss(pred_angles, true_angles)
 
     return loss
+
+
+def dihedral_angle_loss(batch, embs, pred_head):
+    """
+    Given a batch of embeddings, predict the dihedral angle between 4 atoms/2 bonds
+    """
+    dihedrals = batch.dihedral_angles
+    dihedral_embs = torch.cat(
+        [
+            embs[dihedrals[:, 0].long()],
+            embs[dihedrals[:, 1].long()],
+            embs[dihedrals[:, 2].long()],
+            embs[dihedrals[:, 3].long()],
+        ],
+        dim=1,
+    ).to(embs.device)
+
+    pred_dihedrals = pred_head(dihedral_embs).squeeze()
+    true_dihedrals = dihedrals[:, -1]
+    loss = mse_loss(pred_dihedrals, true_dihedrals)
+
+    return loss
