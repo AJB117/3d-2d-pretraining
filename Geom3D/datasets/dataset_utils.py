@@ -116,6 +116,7 @@ def mol_to_graph_data_obj_simple_2D(mol, max_num_nodes=50):
         bond_lengths=torch.empty((0, 1), dtype=torch.float),
         bond_angles=torch.empty((0, 4), dtype=torch.float),
         angle_directions=torch.empty((0,), dtype=torch.long),
+        dihedral_angles=torch.empty((0, 5), dtype=torch.float),
     )
     return data
 
