@@ -232,9 +232,8 @@ def get_dihedral_angles(mol, edge_index):
     return dihedral_angles
 
 
-# 50 atoms is typically good enough for small molecules
 def mol_to_graph_data_obj_simple_3D(
-    mol, pure_atomic_num=False, get_complement_angles=False, max_num_nodes=50
+    mol, pure_atomic_num=False, get_complement_angles=False,
 ):
     # atoms
     atom_features_list = []
