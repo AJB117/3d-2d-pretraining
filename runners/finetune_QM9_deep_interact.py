@@ -224,6 +224,9 @@ def train(epoch, device, loader, optimizer):
 
         loss = criterion(pred, normalized_y)
 
+        if epoch == 2:
+            pdb.set_trace()
+
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -347,10 +350,15 @@ if __name__ == "__main__":
             rotation_transform=rotation_transform,
         )
 
-    TRAIN_mean, TRAIN_std = (
-        train_dataset.mean()[task_id].item(),
-        train_dataset.std()[task_id].item(),
-    )
+    try:
+        TRAIN_mean, TRAIN_std = torch.load(f"{args.dataset}_mean_std_{args.task}.pt")
+    except FileNotFoundError:
+        TRAIN_mean, TRAIN_std = (
+            train_dataset.mean()[task_id].item(),
+            train_dataset.std()[task_id].item(),
+        )
+        torch.save((TRAIN_mean, TRAIN_std), f"{args.dataset}_mean_std_{args.task}.pt")
+
     print("Train mean: {}\tTrain std: {}".format(TRAIN_mean, TRAIN_std))
 
     if args.loss == "mse":
@@ -395,10 +403,16 @@ if __name__ == "__main__":
 
     if args.input_model_file != "":
         try:
-            load_model(model, args.input_model_file, model_3d=model_3d, model_2d=model_2d)
+            load_model(
+                model, args.input_model_file, model_3d=model_3d, model_2d=model_2d
+            )
         except Exception as e:
             print(e)
-            print("Failed to load model from {}; fine-tuning from scratch".format(args.input_model_file))
+            print(
+                "Failed to load model from {}; fine-tuning from scratch".format(
+                    args.input_model_file
+                )
+            )
     else:
         print("fine-tuning from scratch...")
 
@@ -408,6 +422,7 @@ if __name__ == "__main__":
         graph_pred_mlp.to(device)
 
     model_param_group = [{"params": model.parameters(), "lr": args.lr}]
+    print("# of params: ", sum(p.numel() for p in model.parameters()))
 
     if graph_pred_mlp is not None:
         model_param_group.append({"params": graph_pred_mlp.parameters(), "lr": args.lr})
