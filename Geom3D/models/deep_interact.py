@@ -43,11 +43,12 @@ class InteractionMLP(nn.Module):
             layers.append(nn.ReLU())
 
         self.layers = nn.Sequential(*layers)
+        self.initializer = initializer
 
+    def reset_parameters(self):
         for layer in self.layers:
             if isinstance(layer, nn.Linear):
-                # nn.init.xavier_uniform_(layer.weight)
-                apply_init(initializer)(layer.weight)
+                apply_init(self.initializer)(layer.weight)
                 nn.init.zeros_(layer.bias)
 
     def forward(self, rep_2d, rep_3d):
@@ -99,22 +100,29 @@ class Interactor(nn.Module):
         self.atom_encoder_2d = AtomEncoder(emb_dim=emb_dim)
         self.atom_encoder_3d = None
 
-        if model_3d == "SchNet":
-            self.atom_encoder_3d = nn.Embedding(num_node_class, emb_dim)
-            self.atomic_mass = torch.from_numpy(ase.data.atomic_masses).to(device)
+        # if model_3d == "SchNet":
+        self.atom_encoder_3d = nn.Embedding(num_node_class, emb_dim)
+        self.atomic_mass = torch.from_numpy(ase.data.atomic_masses).to(device)
 
-            self.lin1 = nn.Linear(emb_dim, emb_dim)
-            self.schnet_act = ShiftedSoftplus()
-            self.lin2 = nn.Linear(emb_dim, emb_dim)
+        self.mlp_3d = nn.Sequential(
+            nn.Linear(emb_dim, emb_dim), ShiftedSoftplus(), nn.Linear(emb_dim, emb_dim)
+        )
+        for layer in self.mlp_3d:
+            if isinstance(layer, nn.Linear):
+                apply_init(args.initialization)(layer.weight)
+                nn.init.zeros_(layer.bias)
 
-            block_3d = SchNetBlock
+        block_3d = SchNetBlock
 
         self.blocks_3d = nn.ModuleList(
             [block_3d(hidden_channels=emb_dim) for _ in range(num_interaction_blocks)]
         )
 
         self.blocks_2d = nn.ModuleList(
-            [Block2D(args, model_2d) for _ in range(num_interaction_blocks)]
+            [
+                Block2D(args, model_2d, initializer=args.initialization)
+                for _ in range(num_interaction_blocks)
+            ]
         )
 
         if layer_norm:
@@ -163,6 +171,25 @@ class Interactor(nn.Module):
             )
 
             self.interactor = interactor
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        for block in self.blocks_3d:
+            block.reset_parameters()
+        for block in self.blocks_2d:
+            block.reset_parameters()
+        for interactor in self.interactors:
+            interactor.reset_parameters()
+        if self.diff_interactor_per_block:
+            for interactor in self.interactors:
+                interactor.reset_parameters()
+        else:
+            self.interactor.reset_parameters()
+        for layer in self.mlp_3d:
+            if isinstance(layer, nn.Linear):
+                apply_init(self.args.initialization)(layer.weight)
+                nn.init.zeros_(layer.bias)
 
     def forward_3d(
         self,
@@ -312,16 +339,14 @@ class Interactor(nn.Module):
             # virt_emb_2d, virt_emb_3d = torch.split(interaction, self.emb_dim, dim=-1)
             x_2d, x_3d = torch.split(interaction, self.emb_dim, dim=-1)
 
+            if i == self.num_interaction_blocks - 1:
+                x_3d = self.mlp_3d(x_3d)
+
             midstream_outs_2d.append(x_2d)
             midstream_outs_3d.append(x_3d)
 
             # x_2d[virt_mask] = virt_emb_2d
             # x_3d[virt_mask] = virt_emb_3d
-
-        if self.model_3d == "SchNet":
-            x_3d = self.lin1(x_3d)
-            x_3d = self.schnet_act(x_3d)
-            x_3d = self.lin2(x_3d)
 
         if self.interaction_rep_2d == "vnode":
             rep_2d = x_2d[virt_mask]
@@ -360,14 +385,14 @@ class Interactor(nn.Module):
 
 
 class Block2D(nn.Module):
-    def __init__(self, args, gnn_type="GIN"):
+    def __init__(self, args, gnn_type="GIN", initializer="glorot_uniform"):
         super(Block2D, self).__init__()
         self.emb_dim = args.emb_dim
         self.gnn_type = gnn_type
 
         layer = None
         if gnn_type == "GIN":
-            layer = GINBlock(self.emb_dim)
+            layer = GINBlock(self.emb_dim, initializer=initializer)
         elif gnn_type == "GAT":
             layer = GATConv(self.emb_dim, heads=args.gat_heads)
         elif gnn_type == "GCN":
@@ -380,6 +405,9 @@ class Block2D(nn.Module):
             raise ValueError("Invalid GNN type")
 
         self.layer = layer
+
+    def reset_parameters(self):
+        self.layer.reset_parameters()
 
     def forward(self, x, edge_index, edge_attr):
         x = self.layer(x, edge_index, edge_attr)
@@ -403,6 +431,9 @@ class SchNetBlock(nn.Module):
         self.interaction = InteractionBlock(
             hidden_channels, num_gaussians, num_filters, cutoff
         )
+
+    def reset_parameters(self):
+        self.interaction.reset_parameters()
 
     def forward(self, h, pos, batch=None):
         edge_index = radius_graph(pos, r=self.cutoff, batch=batch)

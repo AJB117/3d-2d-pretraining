@@ -15,6 +15,7 @@ from torch_geometric.utils import add_self_loops, degree, softmax
 from torch_scatter import scatter_add
 from .encoders import AtomEncoder, BondEncoder
 from typing import List
+from runners.util import apply_init
 
 
 class TransformerConv(MessagePassing):
@@ -54,7 +55,7 @@ class TransformerConv(MessagePassing):
 
 
 class GINBlock(MessagePassing):
-    def __init__(self, emb_dim):
+    def __init__(self, emb_dim, initializer="glorot"):
         super(GINBlock, self).__init__(aggr="add")
 
         self.mlp = torch.nn.Sequential(
@@ -65,6 +66,7 @@ class GINBlock(MessagePassing):
         self.eps = torch.nn.Parameter(torch.Tensor([0]))
 
         self.bond_encoder = BondEncoder(emb_dim=emb_dim)
+        self.initializer = initializer
 
     def forward(self, x, edge_index, edge_attr):
         edge_embedding = self.bond_encoder(edge_attr)
@@ -74,6 +76,12 @@ class GINBlock(MessagePassing):
         )
 
         return out
+
+    def reset_parameters(self):
+        for m in self.modules():
+            if isinstance(m, torch.nn.Linear):
+                apply_init(self.initializer)(m.weight)
+                zeros(m.bias)
 
     def message(self, x_j, edge_attr):
         return F.relu(x_j + edge_attr)
