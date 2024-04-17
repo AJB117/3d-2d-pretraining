@@ -330,6 +330,11 @@ parser.add_argument(
     action="store_true",
     help="use a different interactor MLP per block",
 )
+parser.add_argument(
+    "--interactor_residual",
+    action="store_true",
+    help="use residual for interaction blocks",
+)
 
 args = parser.parse_args()
 

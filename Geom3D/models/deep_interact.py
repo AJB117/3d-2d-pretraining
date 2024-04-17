@@ -87,6 +87,7 @@ class Interactor(nn.Module):
         self.args = args
         self.num_interaction_blocks = num_interaction_blocks
         self.residual = residual
+        self.interactor_residual = args.interactor_residual
         self.interaction_agg = interaction_agg
         self.interaction_rep_2d = interaction_rep_2d
         self.interaction_rep_3d = interaction_rep_3d
@@ -295,6 +296,8 @@ class Interactor(nn.Module):
 
         prev_3d = x_3d
 
+        interactor_residual_3d, interactor_residual_2d = None, None
+
         for i in range(self.num_interaction_blocks):
             x_2d = self.blocks_2d[i](x_2d, edge_index, edge_attr)
             x_2d = self.dropouts[i](x_2d)
@@ -331,13 +334,28 @@ class Interactor(nn.Module):
             prev_3d = x_3d
 
             # interaction = torch.cat([x_2d, x_3d], dim=-1)
-            if self.diff_interactor_per_block:
-                interaction = self.interactors[i](x_2d, x_3d)
+            if (
+                self.interactor_residual
+                and interactor_residual_2d is not None
+                and interactor_residual_3d is not None
+            ):
+                x_2d_int = x_2d + interactor_residual_2d
+                x_3d_int = x_3d + interactor_residual_3d
             else:
-                interaction = self.interactor(x_2d, x_3d)
+                x_2d_int = x_2d
+                x_3d_int = x_3d
+
+            if self.diff_interactor_per_block:
+                interaction = self.interactors[i](x_2d_int, x_3d_int)
+            else:
+                interaction = self.interactor(x_2d_int, x_3d_int)
 
             # virt_emb_2d, virt_emb_3d = torch.split(interaction, self.emb_dim, dim=-1)
             x_2d, x_3d = torch.split(interaction, self.emb_dim, dim=-1)
+
+            if self.interactor_residual:
+                interactor_residual_2d = x_2d
+                interactor_residual_3d = x_3d
 
             if i == self.num_interaction_blocks - 1:
                 x_3d = self.mlp_3d(x_3d)
