@@ -224,9 +224,6 @@ def train(epoch, device, loader, optimizer):
 
         loss = criterion(pred, normalized_y)
 
-        if epoch == 2:
-            pdb.set_trace()
-
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
