@@ -335,7 +335,9 @@ parser.add_argument(
     action="store_true",
     help="use residual for interaction blocks",
 )
-parser.add_argument("--mixup_ratio", default=0.25, help="ratio for mixup interaction")
+parser.add_argument(
+    "--mixup_ratio", default=0.25, type=float, help="ratio for mixup interaction"
+)
 
 args = parser.parse_args()
 
