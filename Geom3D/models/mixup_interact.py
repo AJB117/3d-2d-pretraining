@@ -328,10 +328,9 @@ class MixupInteractor(nn.Module):
             # mixup
             N, D = x_2d.size()
             mask = torch.rand(N, D).to(x_2d.device) < self.mixup_ratio
-            common_feature_map = mask.float() * x_2d + (1 - mask.float()) * x_3d
 
-            x_2d = common_feature_map
-            x_3d = common_feature_map
+            x_2d = (1 - mask) * x_2d + mask * x_3d
+            x_3d = (1 - mask) * x_3d + mask * x_2d
 
             if self.interactor_residual:
                 interactor_residual_2d = x_2d
