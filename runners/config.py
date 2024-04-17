@@ -265,14 +265,16 @@ parser.add_argument(
     "--pretrain_2d_balances",
     type=float,
     nargs="+",
-    default=[1e-3, 1.0],
+    default=[1.0, 1.0],
+    # default=[1e-3, 1.0],
     help="balancing parameters for 2D blocks' tasks so that all losses are on the same scale",
 )
 parser.add_argument(
     "--pretrain_3d_balances",
     type=float,
     nargs="+",
-    default=[1e-1, 10.0],
+    default=[1.0, 1.0],
+    # default=[1e-1, 10.0],
     help="balancing parameters for 3D blocks' tasks so that all losses are on the same scale",
 )
 parser.add_argument(

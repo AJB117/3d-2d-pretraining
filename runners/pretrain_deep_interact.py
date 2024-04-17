@@ -1,3 +1,4 @@
+from torchviz import make_dot
 import wandb
 import sys
 import uuid
@@ -26,7 +27,7 @@ from deep_interact_losses import (
     edge_existence_loss,
     interatomic_distance_loss,
     bond_angle_loss,
-    dihedral_angle_loss
+    dihedral_angle_loss,
 )
 
 warnings.filterwarnings("ignore")
@@ -193,6 +194,9 @@ def create_pretrain_heads(task, intermediate_dim, device):
     return pred_head.to(device)
 
 
+component = "blocks_2d.2.layer.mlp.0.weight"
+
+
 def pretrain(
     args,
     model_name,
@@ -262,7 +266,7 @@ def pretrain(
                     new_loss = dihedral_angle_loss(batch, midstream, pred_head)
 
                 new_loss = balance_2d * new_loss
-                loss += new_loss
+                loss = loss + new_loss
                 loss_terms.append(new_loss)
                 loss_dict[task_2d] += new_loss.item()
 
@@ -280,7 +284,7 @@ def pretrain(
                     new_loss = edge_classification_loss(batch, midstream, pred_head)
 
                 new_loss = balance_3d * new_loss
-                loss += new_loss
+                loss = loss + new_loss
                 loss_terms.append(new_loss)
                 loss_dict[task_3d] += new_loss.item()
 
@@ -473,13 +477,11 @@ def main():
     for head in pretrain_heads_3d:
         model_param_group.append({"params": head.parameters(), "lr": args.lr})
 
-    # GNNs
+    # model
     model_param_group.append(
-        {"params": model.blocks_2d.parameters(), "lr": args.lr * args.gnn_2d_lr_scale}
+        {"params": model.parameters(), "lr": args.lr * args.gnn_2d_lr_scale}
     )
-    model_param_group.append(
-        {"params": model.blocks_3d.parameters(), "lr": args.lr * args.gnn_3d_lr_scale}
-    )
+    assert args.gnn_2d_lr_scale == args.gnn_3d_lr_scale
 
     print("# parameters: ", sum(p.numel() for p in model.parameters()))
 
