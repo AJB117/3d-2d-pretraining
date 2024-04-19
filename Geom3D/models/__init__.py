@@ -5,3 +5,4 @@ from .autoencoder import AutoEncoder, VariationalAutoEncoder
 from .EGNN import EGNN
 from .encoders import AtomEncoder, BondEncoder
 from .deep_interact import Interactor
+from .mixup_interact import MixupInteractor
