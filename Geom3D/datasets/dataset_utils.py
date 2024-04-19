@@ -1,3 +1,4 @@
+import numba
 import pdb
 from collections import defaultdict
 import seaborn as sb
@@ -121,20 +122,62 @@ def mol_to_graph_data_obj_simple_2D(mol, max_num_nodes=50):
     return data
 
 
+def get_bond_angles_rdkit(mol, edges_list, atom_poses):
+    conformer = mol.GetConformers()[0]
+    bond_angles = []
+
+    for i, edge in enumerate(edges_list):
+        src, dst = edge
+        for j in range(i + 1, len(edges_list)):
+            src2, dst2 = edges_list[j]
+
+            if src == dst2 and dst == src2:
+                continue
+
+            if src2 not in [src, dst] and dst2 not in [src, dst]:
+                continue
+
+            if src2 in [src, dst]:
+                if src2 == src:
+                    anchor = src
+                elif src2 == dst:
+                    anchor = dst
+                    dst = src
+            elif dst2 in [src, dst]:
+                if dst2 == src:
+                    anchor = src
+                elif dst2 == dst:
+                    anchor = dst
+                    dst = src
+
+                dst2 = src2
+
+            angle = Chem.rdMolTransforms.GetAngleRad(conformer, dst, anchor, dst2)
+            assert angle == Chem.rdMolTransforms.GetAngleRad(
+                conformer, dst2, anchor, dst
+            )
+            bond_angles.append([dst, anchor, dst2, angle])
+
+    bond_angles = torch.tensor(bond_angles, dtype=torch.float32)
+    return bond_angles
+
+
+@numba.njit
+def compute_angle(anchor, vec1, vec2):
+    vec1 = vec1 - anchor
+    vec2 = vec2 - anchor
+
+    norm1 = np.linalg.norm(vec1)
+    norm2 = np.linalg.norm(vec2)
+    if norm1 == 0 or norm2 == 0:
+        return 0
+    vec1 = vec1 / (norm1 + 1e-5)  # 1e-5: prevent numerical errors
+    vec2 = vec2 / (norm2 + 1e-5)
+    angle = np.arccos(np.dot(vec1, vec2))
+    return angle
+
+
 def get_angles(edges, atom_poses, dir_type="HT", get_complement_angles=False):
-    def _get_angle(anchor, vec1, vec2):
-        vec1 = vec1 - anchor
-        vec2 = vec2 - anchor
-
-        norm1 = np.linalg.norm(vec1)
-        norm2 = np.linalg.norm(vec2)
-        if norm1 == 0 or norm2 == 0:
-            return 0
-        vec1 = vec1 / (norm1 + 1e-5)  # 1e-5: prevent numerical errors
-        vec2 = vec2 / (norm2 + 1e-5)
-        angle = np.arccos(np.dot(vec1, vec2))
-        return angle
-
     # if there are E' bonds, then this will be E' x 3 where each row has 3 entries:
     # anchor, src, tar which are all node indices
     bond_angle_indices = []
@@ -157,13 +200,13 @@ def get_angles(edges, atom_poses, dir_type="HT", get_complement_angles=False):
             src_edge = edges.T[src_edge_i]
 
             if dir_type == "HT":
-                angle = _get_angle(
+                angle = compute_angle(
                     atom_poses[tar_edge[0]],
                     atom_poses[src_edge[1]],
                     atom_poses[tar_edge[1]],
                 )
             elif dir_type == "HH":
-                angle = _get_angle(
+                angle = compute_angle(
                     atom_poses[tar_edge[1]],
                     atom_poses[src_edge[0]],
                     atom_poses[tar_edge[0]],
@@ -171,7 +214,7 @@ def get_angles(edges, atom_poses, dir_type="HT", get_complement_angles=False):
                 angle /= np.pi  # normalize to [0, 1]
 
                 if get_complement_angles:
-                    complement_angle = _get_angle(
+                    complement_angle = compute_angle(
                         atom_poses[tar_edge[1]],
                         atom_poses[tar_edge[0]],
                         atom_poses[src_edge[0]],
@@ -206,33 +249,52 @@ def get_angles(edges, atom_poses, dir_type="HT", get_complement_angles=False):
     return bond_angles, bond_angle_dirs
 
 
-def get_dihedral_angles(mol):
-    # get dihedral angles of bonds using mol information and positions and edge_index
+def get_dihedral_angles(mol, bond_angles, edge_index, edge_set, positions):
     conformer = mol.GetConformers()[0]
     dihedral_angles = []
 
-    bonds = mol.GetBonds()
-    for bond in bonds:
-        src, dst = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
-        for bond2 in bonds:
-            src2, dst2 = bond2.GetBeginAtomIdx(), bond2.GetEndAtomIdx()
-            if src2 == src or src2 == dst or dst2 == src or dst2 == dst:
-                continue
-            i = src
-            j = dst
-            k = src2
-            l = dst2
+    angle_indices = bond_angles[:, :3].long()
 
-            dihedral_angle = Chem.rdMolTransforms.GetDihedralRad(conformer, i, j, k, l)
-            dihedral_angle /= np.pi  # normalize to [0, 1]
-            dihedral_angles.append([src, dst, src2, dst2, dihedral_angle])
+    for i in range(len(angle_indices)):
+        anchor, src, dst = angle_indices[i]
+        anchor = anchor.item()
+        src = src.item()
+        dst = dst.item()
+        for j in range(i + 1, len(angle_indices)):
+            anchor2, src2, dst2 = angle_indices[j]
+
+            anchor2 = anchor2.item()
+            src2 = src2.item()
+            dst2 = dst2.item()
+
+            if (anchor, anchor2) not in edge_set and (
+                anchor2,
+                anchor,
+            ) not in edge_set:
+                continue
+
+            if src == src2 or dst == dst2 or src == dst2 or dst == src2:
+                continue
+
+            angle = Chem.rdMolTransforms.GetDihedralRad(conformer, src, dst, src2, dst2)
+
+            complement_angle = Chem.rdMolTransforms.GetDihedralRad(
+                conformer, dst2, src2, dst, src
+            )
+
+            # assert that the complement angle is close to the angle
+            assert np.abs(angle - complement_angle) < 1e-8
+
+            dihedral_angles.append([src, dst, src2, dst2, angle])
 
     dihedral_angles = torch.tensor(dihedral_angles, dtype=torch.float32)
     return dihedral_angles
 
 
 def mol_to_graph_data_obj_simple_3D(
-    mol, pure_atomic_num=False, get_complement_angles=False,
+    mol,
+    pure_atomic_num=False,
+    get_complement_angles=False,
 ):
     # atoms
     atom_features_list = []
@@ -290,10 +352,17 @@ def mol_to_graph_data_obj_simple_3D(
             bond_angles = torch.tensor([[0, 1, 0, np.pi]], dtype=torch.float32)
             angle_directions = torch.tensor([0], dtype=torch.long)
 
-        dihedral_angles = get_dihedral_angles(mol)
+        if bond_angles.numel() != 0:
+            dihedral_angles = get_dihedral_angles(
+                mol,
+                bond_angles,
+                edge_index,
+                set(edges_list),
+                positions.detach().numpy(),
+            )
 
-        if dihedral_angles.numel() == 0 or bond_angles.numel() == 0:
-            dihedral_angles = torch.tensor([[0, 1, 2, 3, 0]], dtype=torch.float32)
+            if dihedral_angles.numel() == 0:
+                dihedral_angles = torch.tensor([[0, 1, 2, 3, 0]], dtype=torch.float32)
 
     else:  # mol has no bonds
         num_bond_features = 3  # bond type & direction
