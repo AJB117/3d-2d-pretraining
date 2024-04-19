@@ -118,6 +118,7 @@ def mol_to_graph_data_obj_simple_2D(mol, max_num_nodes=50):
         bond_angles=torch.empty((0, 4), dtype=torch.float),
         angle_directions=torch.empty((0,), dtype=torch.long),
         dihedral_angles=torch.empty((0, 5), dtype=torch.float),
+        coplanar_dihedral_angles=torch.empty((0, 5), dtype=torch.float),
     )
     return data
 
@@ -249,43 +250,52 @@ def get_angles(edges, atom_poses, dir_type="HT", get_complement_angles=False):
     return bond_angles, bond_angle_dirs
 
 
-def get_dihedral_angles(mol, bond_angles, edge_index, edge_set, positions):
+def get_dihedral_angles(mol, bond_angles, edge_set):
     conformer = mol.GetConformers()[0]
     dihedral_angles = []
 
     angle_indices = bond_angles[:, :3].long()
 
     for i in range(len(angle_indices)):
-        anchor, src, dst = angle_indices[i]
+        anchor, head, tail = angle_indices[i]
         anchor = anchor.item()
-        src = src.item()
-        dst = dst.item()
-        for j in range(i + 1, len(angle_indices)):
-            anchor2, src2, dst2 = angle_indices[j]
+        head = head.item()
+        tail = tail.item()
 
-            anchor2 = anchor2.item()
-            src2 = src2.item()
-            dst2 = dst2.item()
-
-            if (anchor, anchor2) not in edge_set and (
-                anchor2,
-                anchor,
-            ) not in edge_set:
+        for edge in edge_set:
+            if anchor in edge:
                 continue
-
-            if src == src2 or dst == dst2 or src == dst2 or dst == src2:
+            if head in edge and tail in edge:
                 continue
+            e1, e2 = edge
 
-            angle = Chem.rdMolTransforms.GetDihedralRad(conformer, src, dst, src2, dst2)
+            new_head, new_tail = None, None
 
-            complement_angle = Chem.rdMolTransforms.GetDihedralRad(
-                conformer, dst2, src2, dst, src
-            )
+            if head == e1:
+                new_head = e2
+            elif head == e2:
+                new_head = e1
 
-            # assert that the complement angle is close to the angle
-            assert np.abs(angle - complement_angle) < 1e-8
+            if tail == e1:
+                new_tail = e2
+            elif tail == e2:
+                new_tail = e1
 
-            dihedral_angles.append([src, dst, src2, dst2, angle])
+            if new_head is not None:
+                i, j, k, l = new_head, head, anchor, tail
+                angle = (
+                    Chem.rdMolTransforms.GetDihedralRad(conformer, i, j, k, l) / np.pi
+                )
+                dihedral_angles.append([i, j, k, l, angle])
+                assert angle == angle
+
+            if new_tail is not None:
+                i, j, k, l = head, anchor, tail, new_tail
+                angle = (
+                    Chem.rdMolTransforms.GetDihedralRad(conformer, i, j, k, l) / np.pi
+                )
+                dihedral_angles.append([i, j, k, l, angle])
+                assert angle == angle
 
     dihedral_angles = torch.tensor(dihedral_angles, dtype=torch.float32)
     return dihedral_angles
@@ -353,13 +363,15 @@ def mol_to_graph_data_obj_simple_3D(
             angle_directions = torch.tensor([0], dtype=torch.long)
 
         if bond_angles.numel() != 0:
-            dihedral_angles = get_dihedral_angles(
-                mol,
-                bond_angles,
-                edge_index,
-                set(edges_list),
-                positions.detach().numpy(),
-            )
+            try:
+                dihedral_angles = get_dihedral_angles(
+                    mol,
+                    bond_angles,
+                    set(edges_list),
+                )
+            except Exception as e:
+                print(e)
+                pdb.set_trace()
 
             if dihedral_angles.numel() == 0:
                 dihedral_angles = torch.tensor([[0, 1, 2, 3, 0]], dtype=torch.float32)
