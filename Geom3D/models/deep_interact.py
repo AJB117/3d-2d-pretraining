@@ -180,8 +180,6 @@ class Interactor(nn.Module):
             block.reset_parameters()
         for block in self.blocks_2d:
             block.reset_parameters()
-        for interactor in self.interactors:
-            interactor.reset_parameters()
         if self.diff_interactor_per_block:
             for interactor in self.interactors:
                 interactor.reset_parameters()
