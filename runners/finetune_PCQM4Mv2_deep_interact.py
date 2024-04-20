@@ -376,23 +376,35 @@ if __name__ == "__main__":
         intermediate_dim = args.emb_dim
 
     num_node_classes, num_edge_classes = 119, 5
-    model, graph_pred_mlp = model_setup()
+    model, graph_pred_mlp, model_2d, model_3d = model_setup()
 
     if args.input_model_file != "":
-        print("loading model from {}".format(args.input_model_file))
-        load_model(model, graph_pred_mlp, args.input_model_file, args.mode)
+        try:
+            load_model(
+                model, args.input_model_file, model_3d=model_3d, model_2d=model_2d
+            )
+        except Exception as e:
+            print(e)
+            print(
+                "Failed to load model from {}; fine-tuning from scratch".format(
+                    args.input_model_file
+                )
+            )
     else:
         print("fine-tuning from scratch...")
 
     model.to(device)
+
     print(model)
+
     if graph_pred_mlp is not None:
         graph_pred_mlp.to(device)
-    print(graph_pred_mlp)
 
     # set up optimizer
     # different learning rate for different part of GNN
     model_param_group = [{"params": model.parameters(), "lr": args.lr}]
+    print("# of params: ", sum(p.numel() for p in model.parameters()))
+
     if graph_pred_mlp is not None:
         model_param_group.append({"params": graph_pred_mlp.parameters(), "lr": args.lr})
     optimizer = optim.Adam(model_param_group, lr=args.lr, weight_decay=args.decay)
