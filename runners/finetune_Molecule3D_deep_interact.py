@@ -153,7 +153,7 @@ def train(epoch, device, loader, optimizer):
     loss_acc = 0
     num_iters = len(loader)
 
-    y_scores = []
+    y_true, y_scores = [], []
 
     if args.verbose:
         L = tqdm(loader)
@@ -199,6 +199,7 @@ def train(epoch, device, loader, optimizer):
         if args.lr_scheduler in ["CosineAnnealingWarmRestarts"]:
             scheduler.step(epoch - 1 + step / num_iters)
 
+        y_true.append(y)
         y_scores.append(pred_denorm)
 
     loss_acc /= len(loader)
@@ -207,8 +208,9 @@ def train(epoch, device, loader, optimizer):
     elif args.lr_scheduler in ["ReduceLROnPlateau"]:
         scheduler.step(loss_acc)
 
+    y_true = torch.cat(y_true, dim=0).cpu().numpy()
     y_scores = torch.cat(y_scores, dim=0).cpu().numpy()
-    mae = mean_absolute_error(y_scores, batch.y.cpu().numpy())
+    mae = mean_absolute_error(y_scores, y_true)
 
     return loss_acc, mae
 
