@@ -82,8 +82,21 @@ class Molecule3D(InMemoryDataset):
         transform=None,
         pre_transform=None,
         pre_filter=None,
+        task="gap",
         args=None,
     ):
+        self.target_field = [
+            "dipole_x",
+            "dipole_y",
+            "dipole_z",
+            "homo",
+            "lumo",
+            "gap",
+            "scf",
+        ]
+        self.task = task
+        self.task_id = self.target_field.index(task)
+
         assert split in ["train", "val", "test"]
         assert split_mode in ["random", "scaffold"]
         self.split_mode = split_mode
@@ -123,6 +136,16 @@ class Molecule3D(InMemoryDataset):
             "scaffold_val.pt",
             "scaffold_test.pt",
         ]
+
+    def mean(self):
+        y = torch.stack([self.get(i).y for i in range(len(self))], dim=0)
+        y = y.mean(dim=0)
+        return y
+
+    def std(self):
+        y = torch.stack([self.get(i).y for i in range(len(self))], dim=0)
+        y = y.std(dim=0)
+        return y
 
     def download(self):
         pass
