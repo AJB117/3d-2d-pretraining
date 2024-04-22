@@ -48,20 +48,12 @@ def model_setup():
     else:
         normalizer = nn.Identity()
 
-    if args.use_3d_only or args.use_2d_only:
-        graph_pred_mlp = nn.Sequential(
-            nn.Linear(intermediate_dim, intermediate_dim),
-            normalizer,
-            nn.ReLU(),
-            nn.Linear(intermediate_dim, num_tasks),
-        )
-    elif args.mode == "method" and args.final_pool == "cat":
-        graph_pred_mlp = nn.Sequential(
-            nn.Linear(intermediate_dim * 2, intermediate_dim),
-            normalizer,
-            nn.ReLU(),
-            nn.Linear(intermediate_dim, num_tasks),
-        )
+    graph_pred_mlp = nn.Sequential(
+        nn.Linear(intermediate_dim, intermediate_dim),
+        normalizer,
+        nn.ReLU(),
+        nn.Linear(intermediate_dim, num_tasks),
+    )
 
     model_2d, model_3d = None, None
 
@@ -99,13 +91,13 @@ def model_setup():
         dropout=args.dropout_ratio,
         batch_norm=args.batch_norm,
         layer_norm=args.layer_norm,
-    )
+    ).to(device)
 
     for layer in graph_pred_mlp:
         if isinstance(layer, nn.Linear):
             apply_init(args.initialization)(layer.weight)
 
-    return model, graph_pred_mlp, model_2d, model_3d
+    return model, graph_pred_mlp.to(device)
 
 
 def load_model(model, graph_pred_linear, model_weight_file):
@@ -162,27 +154,17 @@ def train(epoch, device, loader, optimizer):
     for step, batch in enumerate(L):
         batch = batch.to(device)
 
-        if args.mode != "method":  # assumes 3d
-            mol_rep = model(batch.x, batch.positions, batch=batch.batch)
+        if args.mode != "method":
+            mol_rep = model(batch.x, batch.edge_index, batch.edge_attr, batch.batch)
         else:
-            if args.use_3d_only:
-                mol_rep = model.forward_3d(batch.x, batch.positions, batch.batch)
-            elif args.use_2d_only:
-                mol_rep = model.forward_2d(
-                    batch.x, batch.edge_index, batch.edge_attr, batch.batch
-                )
-            else:
-                mol_rep = model(
-                    batch.x,
-                    batch.edge_index,
-                    batch.edge_attr,
-                    batch.positions,
-                    batch.batch,
-                )
+            mol_rep = model.forward_2d(
+                batch.x, batch.edge_index, batch.edge_attr, batch.batch
+            )
 
-            pred = graph_pred_mlp(mol_rep).squeeze()
+        pred = graph_pred_mlp(mol_rep).squeeze()
 
-        y = batch.y
+        B = pred.size()[0]
+        y = batch.y.view(B, -1)[:, task_id]
 
         # normalize
         y = (y - mean) / std
@@ -230,32 +212,23 @@ def eval(device, loader):
     for batch in L:
         batch = batch.to(device)
 
-        if args.mode != "method":  # assumes 3d
-            mol_rep = model(batch.x, batch.positions, batch=batch.batch)
+        if args.mode != "method":
+            mol_rep = model(batch.x, batch.edge_index, batch.edge_attr, batch.batch)
         else:
-            if args.use_3d_only:
-                mol_rep = model.forward_3d(batch.x, batch.positions, batch.batch)
-            elif args.use_2d_only:
-                mol_rep = model.forward_2d(
-                    batch.x, batch.edge_index, batch.edge_attr, batch.batch
-                )
-            else:
-                mol_rep = model(
-                    batch.x,
-                    batch.edge_index,
-                    batch.edge_attr,
-                    batch.positions,
-                    batch.batch,
-                )
+            mol_rep = model.forward_2d(
+                batch.x, batch.edge_index, batch.edge_attr, batch.batch
+            )
 
-            pred = graph_pred_mlp(mol_rep).squeeze()
+        pred = graph_pred_mlp(mol_rep).squeeze()
 
         if graph_pred_mlp is not None:
             pred = graph_pred_mlp(mol_rep).squeeze()
         else:
             pred = mol_rep.squeeze()
 
-        y = batch.y
+        B = pred.size()[0]
+        y = batch.y.view(B, -1)[:, task_id]
+
         # denormalize pred
         pred = (pred * std) + mean
 
@@ -283,14 +256,25 @@ if __name__ == "__main__":
     num_tasks = 1
 
     assert args.dataset == "Molecule3D"
-    data_root = "{}/{}".format(args.input_data_dir, args.dataset.lower())
+    # data_root = "{}/{}".format(args.input_data_dir, args.dataset)
+    data_root = args.input_data_dir
 
-    train_dataset = Molecule3D(split="train")
-    valid_dataset = Molecule3D(split="val")
-    test_dataset = Molecule3D(split="test")
+    train_dataset = Molecule3D(root=data_root, split="train")
+    valid_dataset = Molecule3D(root=data_root, split="val")
+    test_dataset = Molecule3D(root=data_root, split="test")
 
-    mean = train_dataset.data.y.mean().item()
-    std = train_dataset.data.y.std().item()
+    task_id = train_dataset.task_id
+
+    try:
+        mean, std = torch.load(f"{args.dataset}_mean_std_{args.task}.pt")
+    except FileNotFoundError:
+        mean, std = (
+            train_dataset.mean()[task_id].item(),
+            train_dataset.std()[task_id].item(),
+        )
+        torch.save((mean, std), f"{args.dataset}_mean_std_{args.task}.pt")
+
+    print("Train mean: {}\tTrain std: {}".format(mean, std))
 
     if args.loss == "mse":
         criterion = nn.MSELoss()
