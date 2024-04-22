@@ -186,9 +186,10 @@ if __name__ == "__main__":
     assert args.dataset == "Molecule3D"
     data_root = "{}/{}".format(args.input_data_dir, args.dataset.lower())
 
-    train_dataset = Molecule3D(split="train")
-    valid_dataset = Molecule3D(split="val")
-    test_dataset = Molecule3D(split="test")
+    root = "/scratch/zqe3cg/Molecule3D"
+    train_dataset = Molecule3D(root=root, split="train")
+    valid_dataset = Molecule3D(root=root, split="val")
+    test_dataset = Molecule3D(root=root,split="test")
 
     mean = train_dataset.data.y.mean().item()
     std = train_dataset.data.y.std().item()
