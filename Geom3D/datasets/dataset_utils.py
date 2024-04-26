@@ -10,6 +10,8 @@ import networkx as nx
 from rdkit import Chem
 from rdkit.Chem import AllChem
 from typing import Union, Optional
+from torch_geometric.utils import to_dense_adj
+from scipy.sparse.csgraph import floyd_warshall
 
 import torch
 from torch_geometric.data import Data
@@ -116,14 +118,14 @@ def mol_to_graph_data_obj_simple_2D(mol, max_num_nodes=50):
         positions=torch.empty((0, 3), dtype=torch.float),
         bond_lengths=torch.empty((0, 1), dtype=torch.float),
         bond_angles=torch.empty((0, 4), dtype=torch.float),
-        angle_directions=torch.empty((0,), dtype=torch.long),
+        # angle_directions=torch.empty((0,), dtype=torch.long),
         dihedral_angles=torch.empty((0, 5), dtype=torch.float),
-        coplanar_dihedral_angles=torch.empty((0, 5), dtype=torch.float),
+        spd_mat=torch.empty((0, 0), dtype=torch.long),
     )
     return data
 
 
-def get_bond_angles_rdkit(mol, edges_list, atom_poses):
+def get_bond_angles_rdkit(mol, edges_list):
     conformer = mol.GetConformers()[0]
     bond_angles = []
 
@@ -140,24 +142,20 @@ def get_bond_angles_rdkit(mol, edges_list, atom_poses):
 
             if src2 in [src, dst]:
                 if src2 == src:
-                    anchor = src
+                    src, anchor, dst = dst, src, dst2
                 elif src2 == dst:
-                    anchor = dst
-                    dst = src
+                    src, anchor, dst = src, dst, dst2
             elif dst2 in [src, dst]:
                 if dst2 == src:
-                    anchor = src
+                    src, anchor, dst = dst, src, src2
                 elif dst2 == dst:
-                    anchor = dst
-                    dst = src
+                    src, anchor, dst = src, dst, src2
 
-                dst2 = src2
-
-            angle = Chem.rdMolTransforms.GetAngleRad(conformer, dst, anchor, dst2)
-            assert angle == Chem.rdMolTransforms.GetAngleRad(
-                conformer, dst2, anchor, dst
+            angle = (
+                Chem.rdMolTransforms.GetAngleRad(conformer, src, anchor, dst) / np.pi
             )
-            bond_angles.append([dst, anchor, dst2, angle])
+
+            bond_angles.append([anchor, src, dst, angle])
 
     bond_angles = torch.tensor(bond_angles, dtype=torch.float32)
     return bond_angles
@@ -255,6 +253,7 @@ def get_dihedral_angles(mol, bond_angles, edge_set):
     dihedral_angles = []
 
     angle_indices = bond_angles[:, :3].long()
+    seen = set()
 
     for i in range(len(angle_indices)):
         anchor, head, tail = angle_indices[i]
@@ -283,19 +282,31 @@ def get_dihedral_angles(mol, bond_angles, edge_set):
 
             if new_head is not None:
                 i, j, k, l = new_head, head, anchor, tail
+                if (i, j, k, l) in seen:
+                    continue
                 angle = (
                     Chem.rdMolTransforms.GetDihedralRad(conformer, i, j, k, l) / np.pi
                 )
-                dihedral_angles.append([i, j, k, l, angle])
-                assert angle == angle
+                seen.add((i, j, k, l))
 
-            if new_tail is not None:
+                # # complement angle
+                # seen.add((i, k, j, l))
+                # seen.add((l, j, k, i))
+                dihedral_angles.append([i, j, k, l, angle])
+
+            elif new_tail is not None:
                 i, j, k, l = head, anchor, tail, new_tail
+                if (i, j, k, l) in seen:
+                    continue
                 angle = (
                     Chem.rdMolTransforms.GetDihedralRad(conformer, i, j, k, l) / np.pi
                 )
+                seen.add((i, j, k, l))
+
+                # # complement angle
+                # seen.add((i, k, j, l))
+                # seen.add((l, j, k, i))
                 dihedral_angles.append([i, j, k, l, angle])
-                assert angle == angle
 
     dihedral_angles = torch.tensor(dihedral_angles, dtype=torch.float32)
     return dihedral_angles
@@ -351,16 +362,17 @@ def mol_to_graph_data_obj_simple_3D(
         bond_positions = positions[edge_index[0]] - positions[edge_index[1]]
         bond_lengths = torch.norm(bond_positions, dim=1).reshape(-1, 1)
 
-        bond_angles, angle_directions = get_angles(
-            edge_index,
-            positions.detach().numpy(),
-            dir_type="HH",  # always use HH for now
-            get_complement_angles=get_complement_angles,
-        )
+        try:
+            bond_angles = get_bond_angles_rdkit(
+                mol,
+                edges_list,
+            )
+        except Exception as e:
+            print(e)
+            pdb.set_trace()
 
         if bond_angles.numel() == 0:
             bond_angles = torch.tensor([[0, 1, 0, np.pi]], dtype=torch.float32)
-            angle_directions = torch.tensor([0], dtype=torch.long)
 
         if bond_angles.numel() != 0:
             try:
@@ -376,6 +388,15 @@ def mol_to_graph_data_obj_simple_3D(
             if dihedral_angles.numel() == 0:
                 dihedral_angles = torch.tensor([[0, 1, 2, 3, 0]], dtype=torch.float32)
 
+        try:
+            adj_matrix = to_dense_adj(edge_index).squeeze(0).long().cpu().numpy()
+            spd_mat = floyd_warshall(adj_matrix, return_predecessors=False)
+
+            spd_mat = torch.tensor(spd_mat, dtype=torch.long)
+        except Exception as e:
+            print(e)
+            pdb.set_trace()
+
     else:  # mol has no bonds
         num_bond_features = 3  # bond type & direction
         edge_index = torch.empty((2, 0), dtype=torch.long)
@@ -383,8 +404,9 @@ def mol_to_graph_data_obj_simple_3D(
         bond_lengths = torch.empty((0, 1), dtype=torch.float)
         bond_angles = torch.empty((0, 4), dtype=torch.float)
         # angle_directions = torch.empty((0, 1), dtype=torch.long)
-        angle_directions = torch.empty((0,), dtype=torch.long)
+        # angle_directions = torch.empty((0,), dtype=torch.long)
         dihedral_angles = torch.empty((0, 5), dtype=torch.float)
+        spd_mat = torch.zeros((0, 0), dtype=torch.long)
 
     data = Data(
         x=x,
@@ -393,8 +415,9 @@ def mol_to_graph_data_obj_simple_3D(
         edge_attr=edge_attr,
         bond_lengths=bond_lengths,
         bond_angles=bond_angles,
-        angle_directions=angle_directions,
+        # angle_directions=angle_directions,
         dihedral_angles=dihedral_angles,
+        spd_mat=spd_mat.flatten(),
     )
     return data, atom_count
 
