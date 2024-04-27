@@ -41,7 +41,7 @@ class PCQM4Mv2(InMemoryDataset):
 
     @property
     def raw_file_names(self):
-        return "pcqm4m-v2-train.sdf "
+        return "pcqm4m-v2-train.sdf"
 
     @property
     def processed_file_names(self):
@@ -73,6 +73,8 @@ class PCQM4Mv2(InMemoryDataset):
         sdf_file = "{}/{}".format(self.raw_dir, self.raw_file_names).strip()
 
         suppl = Chem.SDMolSupplier(sdf_file)
+        # dihedral_angles = []
+
         for idx, smiles in enumerate(tqdm(smiles_list)):
             try:
                 mol = suppl[idx]
@@ -89,6 +91,18 @@ class PCQM4Mv2(InMemoryDataset):
             data_smiles_list.append(smiles)
 
             data.y = homolumogap_list[idx]
+
+        #     dihedral_angles.append(data.dihedral_angles)
+
+        #     if idx == 4500:
+        #         break
+
+        # import matplotlib.pyplot as plt
+
+        # # plot histogram of dihedral angles
+        # dihedral_angles = torch.cat(dihedral_angles)
+        # plt.hist(dihedral_angles[:, -1], bins=100)
+        # plt.show()
 
         if self.pre_filter is not None:
             data_list = [data for data in data_list if self.pre_filter(data)]
