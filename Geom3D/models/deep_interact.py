@@ -40,7 +40,7 @@ class InteractionMLP(nn.Module):
             layers.append(nn.Linear(emb_dim, emb_dim))
             layers.append(nn.Dropout(dropout))
             layers.append(normalizer(emb_dim))
-            layers.append(nn.ReLU())
+            layers.append(nn.GELU())
 
         self.layers = nn.Sequential(*layers)
         self.initializer = initializer
@@ -91,6 +91,7 @@ class Interactor(nn.Module):
         self.interaction_agg = interaction_agg
         self.interaction_rep_2d = interaction_rep_2d
         self.interaction_rep_3d = interaction_rep_3d
+        self.JK = args.JK
 
         self.model_2d = args.model_2d
         self.model_3d = args.model_3d
@@ -397,7 +398,30 @@ class Interactor(nn.Module):
         if require_midstream:
             return x, midstream_outs_2d, midstream_outs_3d
 
-        return x
+        if self.JK == "last":
+            return x
+        elif self.JK in ("sum", "mean"):
+            means_2d = [
+                global_mean_pool(midstream_2d, batch)
+                for midstream_2d in midstream_outs_2d
+            ]
+            means_3d = [
+                global_mean_pool(midstream_3d, batch)
+                for midstream_3d in midstream_outs_3d
+            ]
+
+            outs_2d = torch.stack(means_2d)
+            outs_3d = torch.stack(means_3d)
+
+            outs = torch.cat([outs_2d, outs_3d], dim=-1)
+            final = torch.cat([outs, x.unsqueeze(0)], dim=0)
+
+            if self.JK == "sum":
+                return final.sum(dim=0)
+            elif self.JK == "mean":
+                return final.mean(dim=0)
+        else:
+            return x
 
 
 class Block2D(nn.Module):
