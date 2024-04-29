@@ -375,6 +375,8 @@ def get_dihedral_angles(mol, bond_angles, edge_set, efficient=False):
 
             if new_head is not None:
                 i, j, k, l = new_head, head, anchor, tail
+                if i == j or k == l:
+                    continue
                 if (i, j, k, l) in seen:
                     continue
                 angle_forward = (
@@ -400,6 +402,8 @@ def get_dihedral_angles(mol, bond_angles, edge_set, efficient=False):
 
             elif new_tail is not None:
                 i, j, k, l = head, anchor, tail, new_tail
+                if i == j or k == l:
+                    continue
                 if (i, j, k, l) in seen:
                     continue
                 angle_forward = (
