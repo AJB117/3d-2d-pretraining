@@ -25,12 +25,17 @@ from collections import defaultdict
 from deep_interact_losses import (
     edge_classification_loss,
     edge_existence_loss,
+    spd_loss,
     interatomic_distance_loss,
     bond_angle_loss,
     dihedral_angle_loss,
+    anchor_pred_loss,
+    anchor_tup_pred_loss,
+    get_sample_edges,
+    get_global_atom_indices,
 )
 
-warnings.filterwarnings("ignore")
+# warnings.filterwarnings("ignore")
 
 
 def split(dataset):
@@ -62,7 +67,7 @@ def pretty_print_dict(d):
 
     for key, value in d.items():
         print(
-            f"{str(key).ljust(max_key_length)} | {str(value).ljust(max_value_length)}"
+            f"{str(key).ljust(max_key_length)} | {str(round(value, 5)).ljust(max_value_length)}"
         )
 
 
@@ -157,14 +162,14 @@ def create_pretrain_heads(task, intermediate_dim, device):
 
     if task == "interatomic_dist":
         pred_head = nn.Sequential(
-            nn.Linear(intermediate_dim * 2, intermediate_dim),
+            nn.Linear(intermediate_dim, intermediate_dim),
             normalizer,
             nn.ReLU(),
             nn.Linear(intermediate_dim, 1),
         )
     elif task == "edge_existence":
         pred_head = nn.Sequential(
-            nn.Linear(intermediate_dim * 2, intermediate_dim),
+            nn.Linear(intermediate_dim, intermediate_dim),
             normalizer,
             nn.ReLU(),
             nn.Linear(intermediate_dim, 1),
@@ -185,16 +190,34 @@ def create_pretrain_heads(task, intermediate_dim, device):
         )
     elif task == "edge_classification":
         pred_head = nn.Sequential(
-            nn.Linear(intermediate_dim * 2, intermediate_dim),
+            nn.Linear(intermediate_dim, intermediate_dim),
             normalizer,
             nn.ReLU(),
             nn.Linear(intermediate_dim, n_bond_types),
         )
+    elif task == "spd":
+        pred_head = nn.Sequential(
+            nn.Linear(intermediate_dim, intermediate_dim),
+            normalizer,
+            nn.ReLU(),
+            nn.Linear(intermediate_dim, 64),  # max number of shortest path distances
+        )
+    elif task == "bond_anchor_pred":
+        pred_head = nn.Sequential(
+            nn.Linear(intermediate_dim * 3, intermediate_dim),
+            normalizer,
+            nn.ReLU(),
+            nn.Linear(intermediate_dim, 3),
+        )
+    elif task == "dihedral_anchor_pred":
+        pred_head = nn.Sequential(
+            nn.Linear(intermediate_dim * 4, intermediate_dim),
+            normalizer,
+            nn.ReLU(),
+            nn.Linear(intermediate_dim, 4),
+        )
 
     return pred_head.to(device)
-
-
-component = "blocks_2d.2.layer.mlp.0.weight"
 
 
 def pretrain(
@@ -250,6 +273,18 @@ def pretrain(
             outs_2d = [midstream_2d_outs[i] for i in pretrain_2d_task_indices]
             outs_3d = [midstream_3d_outs[i] for i in pretrain_3d_task_indices]
 
+            if "interatomic_dist" in tasks_2d or "spd" in tasks_3d:
+                sample_edges = get_sample_edges(
+                    batch, args.pretrain_interatomic_samples
+                ).T
+
+            bond_angle_indices = get_global_atom_indices(
+                batch.bond_angles[:, :-1], batch.batch, batch.num_angles
+            )
+            dihedral_angle_indices = get_global_atom_indices(
+                batch.dihedral_angles[:, :-1], batch.batch, batch.num_dihedrals
+            )
+
             for task_2d, pred_head, midstream, balance_2d in zip(
                 tasks_2d, pretrain_heads_2d, outs_2d, balances_2d
             ):
@@ -258,12 +293,16 @@ def pretrain(
                         batch,
                         midstream,
                         pred_head,
-                        max_samples=args.pretrain_interatomic_samples,
+                        sample_edges,
                     )
                 elif task_2d == "bond_angle":
-                    new_loss = bond_angle_loss(batch, midstream, pred_head)
+                    new_loss = bond_angle_loss(
+                        batch, midstream, pred_head, bond_angle_indices
+                    )
                 elif task_2d == "dihedral_angle":
-                    new_loss = dihedral_angle_loss(batch, midstream, pred_head)
+                    new_loss = dihedral_angle_loss(
+                        batch, midstream, pred_head, dihedral_angle_indices
+                    )
 
                 new_loss = balance_2d * new_loss
                 loss = loss + new_loss
@@ -282,6 +321,16 @@ def pretrain(
                     )
                 elif task_3d == "edge_classification":
                     new_loss = edge_classification_loss(batch, midstream, pred_head)
+                elif task_3d == "spd":
+                    new_loss = spd_loss(batch, midstream, pred_head, sample_edges)
+                elif task_3d == "bond_anchor_pred":
+                    new_loss = anchor_pred_loss(
+                        midstream, pred_head, bond_angle_indices
+                    )
+                elif task_3d == "dihedral_anchor_pred":
+                    new_loss = anchor_tup_pred_loss(
+                        midstream, pred_head, dihedral_angle_indices
+                    )
 
                 new_loss = balance_3d * new_loss
                 loss = loss + new_loss
@@ -360,8 +409,9 @@ def main():
         VirtualNodeMol() if args.interaction_rep_3d in ("com", "const_radius") else None
     )
     data_root = "{}/{}".format(args.input_data_dir, args.dataset)
-    if args.dataset == "QM9":
-        data_root = "data/molecule_datasets/{}".format(args.dataset)
+    if args.dataset.startswith("QM9"):
+        # data_root = "data/molecule_datasets/{}".format(args.dataset)
+        data_root = f"{args.input_data_dir}/{args.dataset}"
         use_pure_atomic_num = False
         if args.model_3d == "EGNN":
             use_pure_atomic_num = False
@@ -382,8 +432,9 @@ def main():
         #     transform=transform,
         # )
     elif args.dataset == "PCQM4Mv2":
-        base_dataset = PCQM4Mv2(data_root, transform=None)
-        dataset, _, _ = split(base_dataset)
+        # base_dataset = PCQM4Mv2(data_root, transform=None)
+        # dataset, _, _ = split(base_dataset)
+        dataset = PCQM4Mv2(data_root, transform=None)
 
     print("# data points: ", len(dataset))
 
