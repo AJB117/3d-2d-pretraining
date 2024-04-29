@@ -1,3 +1,4 @@
+import itertools
 import numba
 import pdb
 from collections import defaultdict
@@ -184,6 +185,8 @@ def get_bond_angles_rdkit(mol, edges_list, efficient=False):
         np.random.shuffle(bond_angles)
 
     bond_angles = torch.tensor(bond_angles, dtype=torch.float32)
+    perm = torch.randperm(bond_angles.shape[0])
+    bond_angles = bond_angles[perm]
     return bond_angles
 
 
@@ -304,6 +307,40 @@ def getTorsion(mol, bond):
     return torsion_angles
 
 
+def enumerateTorsions(mol):
+    torsionSmarts = "[!$(*#*)&!D1]~[!$(*#*)&!D1]"
+    torsionQuery = Chem.MolFromSmarts(torsionSmarts)
+    matches = mol.GetSubstructMatches(torsionQuery)
+    torsionList = []
+    for match in matches:
+        idx2 = match[0]
+        idx3 = match[1]
+        bond = mol.GetBondBetweenAtoms(idx2, idx3)
+        jAtom = mol.GetAtomWithIdx(idx2)
+        kAtom = mol.GetAtomWithIdx(idx3)
+        if (
+            (jAtom.GetHybridization() != Chem.HybridizationType.SP2)
+            and (jAtom.GetHybridization() != Chem.HybridizationType.SP3)
+        ) or (
+            (kAtom.GetHybridization() != Chem.HybridizationType.SP2)
+            and (kAtom.GetHybridization() != Chem.HybridizationType.SP3)
+        ):
+            continue
+        for b1 in jAtom.GetBonds():
+            if b1.GetIdx() == bond.GetIdx():
+                continue
+            idx1 = b1.GetOtherAtomIdx(idx2)
+            for b2 in kAtom.GetBonds():
+                if (b2.GetIdx() == bond.GetIdx()) or (b2.GetIdx() == b1.GetIdx()):
+                    continue
+                idx4 = b2.GetOtherAtomIdx(idx3)
+                # skip 3-membered rings
+                if idx4 == idx1:
+                    continue
+                torsionList.append((idx1, idx2, idx3, idx4))
+    return torsionList
+
+
 def get_dihedral_angles(mol, bond_angles, edge_set, efficient=False):
     conformer = mol.GetConformers()[0]
     dihedral_angles = []
@@ -340,31 +377,56 @@ def get_dihedral_angles(mol, bond_angles, edge_set, efficient=False):
                 i, j, k, l = new_head, head, anchor, tail
                 if (i, j, k, l) in seen:
                     continue
-                angle = (
+                angle_forward = (
                     Chem.rdMolTransforms.GetDihedralRad(conformer, i, j, k, l) / np.pi
                 )
-                seen.add((i, j, k, l))
+                angle_backward = (
+                    Chem.rdMolTransforms.GetDihedralRad(conformer, l, k, j, i) / np.pi
+                )
+                # seen.add((i, j, k, l))
 
-                # # complement angle
+                # # # complement angle
                 # seen.add((i, k, j, l))
                 # seen.add((l, j, k, i))
-                dihedral_angles.append([i, j, k, l, angle])
+                # seen.add((i, l, k, j))
+
+                dihedral_angles.append([i, j, k, l, angle_forward])
+                dihedral_angles.append([l, k, j, i, angle_backward])
+
+                combinations = [
+                    tuple(x) for x in itertools.permutations([i, j, k, l], r=4)
+                ]
+                seen.update(combinations)
 
             elif new_tail is not None:
                 i, j, k, l = head, anchor, tail, new_tail
                 if (i, j, k, l) in seen:
                     continue
-                angle = (
+                angle_forward = (
                     Chem.rdMolTransforms.GetDihedralRad(conformer, i, j, k, l) / np.pi
                 )
-                seen.add((i, j, k, l))
+                angle_backward = (
+                    Chem.rdMolTransforms.GetDihedralRad(conformer, l, k, j, i) / np.pi
+                )
+                # seen.add((i, j, k, l))
 
-                # # complement angle
+                # # # complement angle
                 # seen.add((i, k, j, l))
                 # seen.add((l, j, k, i))
-                dihedral_angles.append([i, j, k, l, angle])
+                # seen.add((i, l, k, j))
+
+                dihedral_angles.append([i, j, k, l, angle_forward])
+                dihedral_angles.append([l, k, j, i, angle_backward])
+
+                combinations = [
+                    tuple(x) for x in itertools.permutations([i, j, k, l], r=4)
+                ]
+                seen.update(combinations)
 
     dihedral_angles = torch.tensor(dihedral_angles, dtype=torch.float32)
+    perm = torch.randperm(dihedral_angles.shape[0])
+    dihedral_angles = dihedral_angles[perm]
+
     return dihedral_angles
 
 
