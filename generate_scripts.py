@@ -36,13 +36,21 @@ echo "STARTIME $i $(date)"
     if config["dataset"] == "QM9":
         body += f"""
 cd ../../;
-PYTHONPATH='.' python3 runners/finetune_QM9_deep_interact.py --config_dir {sweep_dir} --config_name {config_name}"""
+PYTHONPATH='.' CUDA_LAUNCH_BLOCKING=1 python3 runners/finetune_QM9_deep_interact.py --config_dir {sweep_dir} --config_name {config_name}"""
     elif config["dataset"] in (
         "bace" "sider" "muv" "tox21" "hiv" "toxcast" "bbbp" "clintox"
     ):
         body += f"""
 cd ../../;
-PYTHONPATH='.' python3 runners/finetune_MoleculeNet_deep_interact.py --config_dir {sweep_dir} --config_name {config_name}"""
+PYTHONPATH='.' CUDA_LAUNCH_BLOCKING=1 python3 runners/finetune_MoleculeNet_deep_interact.py --config_dir {sweep_dir} --config_name {config_name}"""
+    elif config["dataset"] == "PCQM4Mv2":
+        body += f"""
+cd ../../;
+PYTHONPATH='.' CUDA_LAUNCH_BLOCKING=1 python3 runners/finetune_PCQM4Mv2_deep_interact.py --config_dir {sweep_dir} --config_name {config_name}"""
+    elif config["dataset"] == "Molecule3D":
+        body += f"""
+cd ../../;
+PYTHONPATH='.' CUDA_LAUNCH_BLOCKING=1 python3 runners/finetune_Molecule3D_deep_interact.py --config_dir {sweep_dir} --config_name {config_name}"""
 
     body += '\necho "ENDTIME $i $(date)"'
 
