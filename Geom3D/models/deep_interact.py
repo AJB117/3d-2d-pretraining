@@ -17,6 +17,12 @@ from .molecule_gnn_model import (
 from .schnet import InteractionBlock, GaussianSmearing, ShiftedSoftplus
 from runners.util import apply_init
 
+activation_dict = {
+    "ReLU": nn.ReLU,
+    "GELU": nn.GELU,
+    "SiLU": nn.SiLU,
+    "Swish": nn.SiLU
+}
 
 class InteractionMLP(nn.Module):
     def __init__(
@@ -27,6 +33,7 @@ class InteractionMLP(nn.Module):
         interaction_agg="cat",
         normalizer=nn.Identity,
         initializer="glorot",
+        activation="ReLU"
     ):
         super(InteractionMLP, self).__init__()
         self.emb_dim = emb_dim
@@ -34,13 +41,15 @@ class InteractionMLP(nn.Module):
         self.num_layers = num_layers
         self.interaction_agg = interaction_agg
 
+        act = activation_dict[activation]
+
         layers = []
         emb_dim = emb_dim * 2 if interaction_agg == "cat" else emb_dim
         for _ in range(num_layers):
             layers.append(nn.Linear(emb_dim, emb_dim))
             layers.append(nn.Dropout(dropout))
             layers.append(normalizer(emb_dim))
-            layers.append(nn.GELU())
+            layers.append(act())
 
         self.layers = nn.Sequential(*layers)
         self.initializer = initializer
@@ -158,6 +167,7 @@ class Interactor(nn.Module):
                         interaction_agg=interaction_agg,
                         normalizer=normalizer,
                         initializer=args.initialization,
+                        activation=args.interactor_activation
                     ).to(device)
                     for _ in range(num_interaction_blocks)
                 ]
@@ -170,6 +180,7 @@ class Interactor(nn.Module):
                 interaction_agg=interaction_agg,
                 normalizer=normalizer,
                 initializer=args.initialization,
+                activation=args.interactor_activation
             )
 
             self.interactor = interactor
