@@ -432,9 +432,9 @@ def main():
         #     transform=transform,
         # )
     elif args.dataset == "PCQM4Mv2":
-        # base_dataset = PCQM4Mv2(data_root, transform=None)
-        # dataset, _, _ = split(base_dataset)
-        dataset = PCQM4Mv2(data_root, transform=None)
+        base_dataset = PCQM4Mv2(data_root, transform=None)
+        dataset, _, _ = split(base_dataset)
+        # dataset = PCQM4Mv2(data_root, transform=None)
 
     print("# data points: ", len(dataset))
 
