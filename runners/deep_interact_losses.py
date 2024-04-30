@@ -79,6 +79,7 @@ def spd_loss(batch, embs, pred_head, sample_edges):
     """
     spds = batch.spd_mat  # linearized spd matrix
     spds = get_batched_flattened_indices(spds, sample_edges, batch.batch)
+    spds[spds < 0] = 0
 
     pair_embs = embs[sample_edges[0]] + embs[sample_edges[1]]
 
