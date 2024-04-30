@@ -167,7 +167,7 @@ class Interactor(nn.Module):
                         interaction_agg=interaction_agg,
                         normalizer=normalizer,
                         initializer=args.initialization,
-                        activation=args.activation
+                        activation=args.interactor_activation
                     ).to(device)
                     for _ in range(num_interaction_blocks)
                 ]
@@ -180,7 +180,7 @@ class Interactor(nn.Module):
                 interaction_agg=interaction_agg,
                 normalizer=normalizer,
                 initializer=args.initialization,
-                activation=args.activation
+                activation=args.interactor_activation
             )
 
             self.interactor = interactor
