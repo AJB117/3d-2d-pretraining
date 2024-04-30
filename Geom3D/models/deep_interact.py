@@ -33,7 +33,7 @@ class InteractionMLP(nn.Module):
         interaction_agg="cat",
         normalizer=nn.Identity,
         initializer="glorot",
-        activation="ReLU"
+        activation="GELU"
     ):
         super(InteractionMLP, self).__init__()
         self.emb_dim = emb_dim
