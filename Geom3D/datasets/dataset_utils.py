@@ -513,6 +513,7 @@ def mol_to_graph_data_obj_simple_3D(
         try:
             adj_matrix = to_dense_adj(edge_index).squeeze(0).long().cpu().numpy()
             spd_mat = floyd_warshall(adj_matrix, return_predecessors=False)
+            spd_mat[spd_mat == np.inf] = 63  # max distance index
 
             spd_mat = torch.tensor(spd_mat, dtype=torch.long)
         except Exception as e:

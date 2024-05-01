@@ -3,7 +3,8 @@ import pdb
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.utils import batched_negative_sampling
+from torch_geometric.utils import batched_negative_sampling, to_dense_adj
+from scipy.sparse.csgraph import floyd_warshall
 
 mae_loss = nn.L1Loss()
 mse_loss = nn.MSELoss()
@@ -79,7 +80,6 @@ def spd_loss(batch, embs, pred_head, sample_edges):
     """
     spds = batch.spd_mat  # linearized spd matrix
     spds = get_batched_flattened_indices(spds, sample_edges, batch.batch)
-    spds[spds < 0] = 0
 
     pair_embs = embs[sample_edges[0]] + embs[sample_edges[1]]
 
