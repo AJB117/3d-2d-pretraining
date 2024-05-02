@@ -38,21 +38,30 @@ from deep_interact_losses import (
 # warnings.filterwarnings("ignore")
 
 
+def split_pretraining(dataset):
+    split_idx = dataset.get_idx_split()  # only use the train/valid/test-dev splits for fine-tuning, otherwise use the train set
+
+    train_idx = split_idx["train"]
+
+    train_dataset = [dataset[t] for t in train_idx]
+
+    print("train set: ", len(train_dataset))
+    return train_dataset
+
+
 def split(dataset):
     split_idx = dataset.get_idx_split()  # only use the train/valid/test-dev splits for fine-tuning, otherwise use the train set
 
     train_idx = split_idx["train"]
-    # val_idx = split_idx["valid"]
-    # test_idx = split_idx["valid"]
+    val_idx = split_idx["valid"]
+    test_idx = split_idx["valid"]
 
     train_dataset = dataset[train_idx]
-    # train_dataset = [dataset[t] for t in train_idx]
-    # valid_dataset = dataset[val_idx]
-    # test_dataset = dataset[test_idx]
+    valid_dataset = dataset[val_idx]
+    test_dataset = dataset[test_idx]
 
-    # print(len(train_dataset), "\t", len(valid_dataset), "\t", len(test_dataset))
-    # return train_dataset, valid_dataset, test_dataset
-    return train_dataset, None, None
+    print(len(train_dataset), "\t", len(valid_dataset), "\t", len(test_dataset))
+    return train_dataset, valid_dataset, test_dataset
 
 
 # From GPT-4
@@ -437,7 +446,8 @@ def main():
         base_dataset = PCQM4Mv2(data_root, transform=None)
         dataset, _, _ = split(base_dataset)
     elif args.dataset == "PCQM4Mv2-pretraining":
-        dataset = PCQM4Mv2(data_root, transform=None)
+        base_dataset = PCQM4Mv2(data_root, transform=None)
+        dataset = split_pretraining(base_dataset)
 
     print("# data points: ", len(dataset))
 
