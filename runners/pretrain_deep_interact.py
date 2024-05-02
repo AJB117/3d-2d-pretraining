@@ -42,15 +42,17 @@ def split(dataset):
     split_idx = dataset.get_idx_split()  # only use the train/valid/test-dev splits for fine-tuning, otherwise use the train set
 
     train_idx = split_idx["train"]
-    val_idx = split_idx["valid"]
-    test_idx = split_idx["valid"]
+    # val_idx = split_idx["valid"]
+    # test_idx = split_idx["valid"]
 
     train_dataset = dataset[train_idx]
-    valid_dataset = dataset[val_idx]
-    test_dataset = dataset[test_idx]
+    # train_dataset = [dataset[t] for t in train_idx]
+    # valid_dataset = dataset[val_idx]
+    # test_dataset = dataset[test_idx]
 
-    print(len(train_dataset), "\t", len(valid_dataset), "\t", len(test_dataset))
-    return train_dataset, valid_dataset, test_dataset
+    # print(len(train_dataset), "\t", len(valid_dataset), "\t", len(test_dataset))
+    # return train_dataset, valid_dataset, test_dataset
+    return train_dataset, None, None
 
 
 # From GPT-4
@@ -322,7 +324,7 @@ def pretrain(
                 elif task_3d == "edge_classification":
                     new_loss = edge_classification_loss(batch, midstream, pred_head)
                 elif task_3d == "spd":
-                    new_loss = spd_loss(batch, midstream, pred_head, sample_edges)
+                    new_loss = spd_loss(batch, midstream, pred_head, sample_edges, step)
                 elif task_3d == "bond_anchor_pred":
                     new_loss = anchor_pred_loss(
                         midstream, pred_head, bond_angle_indices
@@ -434,7 +436,8 @@ def main():
     elif args.dataset == "PCQM4Mv2":
         base_dataset = PCQM4Mv2(data_root, transform=None)
         dataset, _, _ = split(base_dataset)
-        # dataset = PCQM4Mv2(data_root, transform=None)
+    elif args.dataset == "PCQM4Mv2-pretrain":
+        dataset = PCQM4Mv2(data_root, transform=None)
 
     print("# data points: ", len(dataset))
 
