@@ -324,7 +324,7 @@ def pretrain(
                 elif task_3d == "edge_classification":
                     new_loss = edge_classification_loss(batch, midstream, pred_head)
                 elif task_3d == "spd":
-                    new_loss = spd_loss(batch, midstream, pred_head, sample_edges, step)
+                    new_loss = spd_loss(batch, midstream, pred_head, sample_edges)
                 elif task_3d == "bond_anchor_pred":
                     new_loss = anchor_pred_loss(
                         midstream, pred_head, bond_angle_indices
