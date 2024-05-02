@@ -5,13 +5,14 @@ from collections import defaultdict
 import seaborn as sb
 import matplotlib.pyplot as plt
 
+import networkx as nx
 import numpy as np
 import pandas as pd
 import networkx as nx
 from rdkit import Chem
 from rdkit.Chem import AllChem
 from typing import Union, Optional
-from torch_geometric.utils import to_dense_adj
+from torch_geometric.utils import to_dense_adj, to_networkx
 from scipy.sparse.csgraph import floyd_warshall
 
 import torch
@@ -435,7 +436,7 @@ def get_dihedral_angles(mol, bond_angles, edge_set, efficient=False):
 
 
 def mol_to_graph_data_obj_simple_3D(
-    mol, pure_atomic_num=False, get_complement_angles=False, efficient=False
+    mol, pure_atomic_num=False, get_complement_angles=False, efficient=False, pretraining=False
 ):
     # atoms
     atom_features_list = []
@@ -459,7 +460,7 @@ def mol_to_graph_data_obj_simple_3D(
     conformer = mol.GetConformers()[0]
     positions = conformer.GetPositions()
     positions = torch.Tensor(positions)
-
+    spd_mat = torch.zeros((1,), dtype=torch.long)
     # bonds
     # num_bond_features = 2  # bond type, bond direction
     if len(mol.GetBonds()) > 0:  # mol has bonds
@@ -478,6 +479,19 @@ def mol_to_graph_data_obj_simple_3D(
         edge_index = torch.tensor(np.array(edges_list).T, dtype=torch.long)
         # Edge feature matrix with shape [num_edges, num_edge_features]
         edge_attr = torch.tensor(np.array(edge_feats_list), dtype=torch.long)
+
+        if pretraining:
+            data = Data(
+                x=x,
+                positions=positions,
+                edge_index=edge_index,
+                edge_attr=edge_attr,
+            )
+            graph = to_networkx(data).to_undirected()
+            n_connected_components = len(list(nx.connected_components(graph)))
+            if n_connected_components > 1:
+                print("Skipping because number of connected components: ", n_connected_components)
+                return None, None
 
         bond_positions = positions[edge_index[0]] - positions[edge_index[1]]
         bond_lengths = torch.norm(bond_positions, dim=1).reshape(-1, 1)
@@ -516,6 +530,11 @@ def mol_to_graph_data_obj_simple_3D(
             spd_mat[spd_mat == np.inf] = 63  # max distance index
 
             spd_mat = torch.tensor(spd_mat, dtype=torch.long)
+            try:
+                assert spd_mat.numel() != 0
+            except:
+                print("Empty spd_mat")
+                pdb.set_trace()
         except Exception as e:
             print(e)
             pdb.set_trace()
@@ -529,9 +548,16 @@ def mol_to_graph_data_obj_simple_3D(
         # angle_directions = torch.empty((0, 1), dtype=torch.long)
         # angle_directions = torch.empty((0,), dtype=torch.long)
         dihedral_angles = torch.empty((0, 5), dtype=torch.float)
-        spd_mat = torch.zeros((0), dtype=torch.long)
+        spd_mat = torch.zeros((1,), dtype=torch.long)
         num_angles = 0
         num_dihedrals = 0
+
+    # assert that spd_mat is non-empty
+    try:
+        assert spd_mat.numel() != 0
+    except:
+        print("Empty spd_mat")
+        pdb.set_trace()
 
     num_angles = torch.tensor(num_angles, dtype=torch.long)
     num_dihedrals = torch.tensor(num_dihedrals, dtype=torch.long)
