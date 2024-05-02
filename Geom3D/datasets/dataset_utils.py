@@ -16,6 +16,7 @@ from torch_geometric.utils import to_dense_adj, to_networkx
 from scipy.sparse.csgraph import floyd_warshall
 
 import torch
+import torch.nn.functional as F
 from torch_geometric.data import Data
 from ogb.utils.features import atom_to_feature_vector, bond_to_feature_vector
 
@@ -436,7 +437,11 @@ def get_dihedral_angles(mol, bond_angles, edge_set, efficient=False):
 
 
 def mol_to_graph_data_obj_simple_3D(
-    mol, pure_atomic_num=False, get_complement_angles=False, efficient=False, pretraining=False
+    mol,
+    pure_atomic_num=False,
+    get_complement_angles=False,
+    efficient=False,
+    pretraining=False,
 ):
     # atoms
     atom_features_list = []
@@ -490,7 +495,10 @@ def mol_to_graph_data_obj_simple_3D(
             graph = to_networkx(data).to_undirected()
             n_connected_components = len(list(nx.connected_components(graph)))
             if n_connected_components > 1:
-                print("Skipping because number of connected components: ", n_connected_components)
+                print(
+                    "Skipping because number of connected components: ",
+                    n_connected_components,
+                )
                 return None, None
 
         bond_positions = positions[edge_index[0]] - positions[edge_index[1]]
@@ -529,7 +537,7 @@ def mol_to_graph_data_obj_simple_3D(
             spd_mat = floyd_warshall(adj_matrix, return_predecessors=False)
             spd_mat[spd_mat == np.inf] = 63  # max distance index
 
-            spd_mat = torch.tensor(spd_mat, dtype=torch.long)
+            spd_mat = torch.tensor(spd_mat).long()
             try:
                 assert spd_mat.numel() != 0
             except:
@@ -552,12 +560,19 @@ def mol_to_graph_data_obj_simple_3D(
         num_angles = 0
         num_dihedrals = 0
 
+        return None, None
+
     # assert that spd_mat is non-empty
     try:
         assert spd_mat.numel() != 0
     except:
         print("Empty spd_mat")
         pdb.set_trace()
+
+    # pad spd_mat to 50 x 50
+    if spd_mat.shape[0] < 50:
+        pad = 50 - spd_mat.shape[0]
+        spd_mat = F.pad(spd_mat, (0, pad, 0, pad), value=63)
 
     num_angles = torch.tensor(num_angles, dtype=torch.long)
     num_dihedrals = torch.tensor(num_dihedrals, dtype=torch.long)

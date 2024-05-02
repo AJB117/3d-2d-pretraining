@@ -17,7 +17,13 @@ from Geom3D.datasets.dataset_utils import (
 
 class PCQM4Mv2(InMemoryDataset):
     def __init__(
-        self, root, transform=None, pre_transform=None, pre_filter=None, addHs=False, pretraining=False
+        self,
+        root,
+        transform=None,
+        pre_transform=None,
+        pre_filter=None,
+        addHs=False,
+        pretraining=False,
     ):
         self.root = root
 
@@ -84,16 +90,22 @@ class PCQM4Mv2(InMemoryDataset):
                     print("Skipping single-atom molecule")
                     continue
 
-                data, _ = mol_to_graph_data_obj_simple_3D(mol, pretraining=self.pretraining)
+                data, _ = mol_to_graph_data_obj_simple_3D(
+                    mol, pretraining=self.pretraining
+                )
 
                 if data is None:
                     continue
 
             except IndexError:
-                mol = Chem.MolFromSmiles(smiles)
-                if self.addHs:
-                    mol = Chem.AddHs(mol)
-                data = mol_to_graph_data_obj_simple_2D(mol)
+                if self.pretraining:
+                    continue
+
+                else:  # only count 2D mols if not pretraining
+                    mol = Chem.MolFromSmiles(smiles)
+                    if self.addHs:
+                        mol = Chem.AddHs(mol)
+                    data = mol_to_graph_data_obj_simple_2D(mol)
 
             data_list.append(data)
 
@@ -102,9 +114,9 @@ class PCQM4Mv2(InMemoryDataset):
 
             data.y = homolumogap_list[idx]
 
-        #     dihedral_angles.append(data.dihedral_angles)
+            #     dihedral_angles.append(data.dihedral_angles)
 
-            # if idx == 100000:
+            # if idx == 500000:
             #     break
 
         # import matplotlib.pyplot as plt
