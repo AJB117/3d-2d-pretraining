@@ -17,7 +17,7 @@ from Geom3D.datasets.dataset_utils import (
 
 class PCQM4Mv2(InMemoryDataset):
     def __init__(
-        self, root, transform=None, pre_transform=None, pre_filter=None, addHs=False
+        self, root, transform=None, pre_transform=None, pre_filter=None, addHs=False, pretraining=False
     ):
         self.root = root
 
@@ -25,6 +25,7 @@ class PCQM4Mv2(InMemoryDataset):
         self.pre_transform = pre_transform
         self.pre_filter = pre_filter
         self.addHs = addHs
+        self.pretraining = pretraining
         super(PCQM4Mv2, self).__init__(root, transform, pre_transform, pre_filter)
 
         self.data, self.slices = torch.load(self.processed_paths[0])
@@ -78,8 +79,17 @@ class PCQM4Mv2(InMemoryDataset):
         for idx, smiles in enumerate(tqdm(smiles_list)):
             try:
                 mol = suppl[idx]
-                data, _ = mol_to_graph_data_obj_simple_3D(mol)
-            except:
+
+                if self.pretraining and mol.GetNumAtoms() == 1:
+                    print("Skipping single-atom molecule")
+                    continue
+
+                data, _ = mol_to_graph_data_obj_simple_3D(mol, pretraining=self.pretraining)
+
+                if data is None:
+                    continue
+
+            except IndexError:
                 mol = Chem.MolFromSmiles(smiles)
                 if self.addHs:
                     mol = Chem.AddHs(mol)
@@ -94,8 +104,8 @@ class PCQM4Mv2(InMemoryDataset):
 
         #     dihedral_angles.append(data.dihedral_angles)
 
-        #     if idx == 4500:
-        #         break
+            # if idx == 100000:
+            #     break
 
         # import matplotlib.pyplot as plt
 
