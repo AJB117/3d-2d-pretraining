@@ -339,6 +339,7 @@ parser.add_argument("--interactor_activation", default="GELU")
 parser.add_argument(
     "--mixup_ratio", default=0.25, type=float, help="ratio for mixup interaction"
 )
+parser.add_argument("--transfer", action="store_true", help="only for 2d-only usage. adds 3d atom embeddings to the 2d atom embeddings")
 
 args = parser.parse_args()
 

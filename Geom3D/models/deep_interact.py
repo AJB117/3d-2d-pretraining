@@ -248,6 +248,8 @@ class Interactor(nn.Module):
         batch,
     ):
         x = self.atom_encoder_2d(x)
+        if self.args.transfer:
+            x = x + self.atom_encoder_3d(x)
         prev = x
         for i in range(self.num_interaction_blocks):
             x = self.blocks_2d[i](x, edge_index, edge_attr)
