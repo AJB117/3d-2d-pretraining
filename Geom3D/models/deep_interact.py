@@ -250,6 +250,7 @@ class Interactor(nn.Module):
         x = self.atom_encoder_2d(x)
         if self.args.transfer:
             x = x + self.atom_encoder_3d(x)
+        h_list = [x]
         prev = x
         for i in range(self.num_interaction_blocks):
             x = self.blocks_2d[i](x, edge_index, edge_attr)
@@ -260,6 +261,7 @@ class Interactor(nn.Module):
             if self.residual:
                 x = x + prev
 
+            h_list.append(x)
             prev = x
 
         if self.interaction_rep_2d == "vnode":
@@ -268,6 +270,20 @@ class Interactor(nn.Module):
             x = global_mean_pool(x, batch)
         elif self.interaction_rep_2d == "sum":
             x = global_add_pool(x, batch)
+        
+        if self.JK == "last":
+            return x
+        elif self.JK in ("sum", "mean"):
+            means = [
+                global_mean_pool(h, batch) for h in h_list
+            ]
+            outs = torch.stack(means)
+            final = torch.cat([outs, x.unsqueeze(0)], dim=0)
+
+            if self.JK == "sum":
+                return final.sum(dim=0)
+            elif self.JK == "mean":
+                return final.mean(dim=0)
 
         return x
 
