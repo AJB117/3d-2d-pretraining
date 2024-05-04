@@ -339,8 +339,16 @@ parser.add_argument("--interactor_activation", default="GELU")
 parser.add_argument(
     "--mixup_ratio", default=0.25, type=float, help="ratio for mixup interaction"
 )
-parser.add_argument("--transfer", action="store_true", help="only for 2d-only usage. adds 3d atom embeddings to the 2d atom embeddings")
-
+parser.add_argument(
+    "--transfer",
+    action="store_true",
+    help="only for 2d-only usage. adds 3d atom embeddings to the 2d atom embeddings",
+)
+parser.add_argument(
+    "--all_losses_at_end",
+    action="store_true",
+    help="ablate with all loss functions at the end of the blocks",
+)
 args = parser.parse_args()
 
 if args.config_dir and args.config_name:

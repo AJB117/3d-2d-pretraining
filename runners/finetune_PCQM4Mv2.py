@@ -77,6 +77,9 @@ def model_setup():
         raise Exception("2D model {} not included.".format(args.model_2d))
     return model, graph_pred_linear
 
+    for layer in graph_pred_mlp:
+        if isinstance(layer, nn.Linear):
+            apply_init(args.initialization)(layer.weight)
 
 def load_model(model, graph_pred_linear, model_weight_file, mode="MoleculeSDE"):
     print("Loading from {}".format(model_weight_file))
