@@ -20,7 +20,7 @@ parser.add_argument(
     "--model_2d",
     type=str,
     default="GIN",
-    choices=["GIN", "GAT", "GCN", "GraphSAGE", "Transformer"],
+    choices=["GIN", "GAT", "GCN", "GraphSAGE", "Transformer", "GT", "GPS"],
 )
 
 # about dataset and dataloader

@@ -1,11 +1,7 @@
 import ase
 import torch
 import torch.nn as nn
-from torch_geometric.nn import (
-    global_add_pool,
-    global_mean_pool,
-    radius_graph,
-)
+from torch_geometric.nn import global_add_pool, global_mean_pool, radius_graph, GPSConv
 from .encoders import AtomEncoder
 from .molecule_gnn_model import (
     GINBlock,
@@ -470,6 +466,10 @@ class Block2D(nn.Module):
             layer = GraphSAGEConv(self.emb_dim, self.emb_dim)
         elif gnn_type == "Transformer":
             layer = TransformerConv(self.emb_dim, heads=args.transformer_heads)
+        elif gnn_type == "GPS":
+            layer = GPSConv(
+                self.emb_dim, GINBlock(self.emb_dim, initializer=initializer), heads=2
+            )
         else:
             raise ValueError("Invalid GNN type")
 
@@ -479,7 +479,7 @@ class Block2D(nn.Module):
         self.layer.reset_parameters()
 
     def forward(self, x, edge_index, edge_attr):
-        x = self.layer(x, edge_index, edge_attr)
+        x = self.layer(x, edge_index, edge_attr=edge_attr)
         return x
 
 
