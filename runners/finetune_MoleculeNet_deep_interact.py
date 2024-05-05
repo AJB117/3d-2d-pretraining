@@ -23,6 +23,7 @@ from util import get_num_task, apply_init
 
 warnings.filterwarnings("ignore")
 
+
 def mean_absolute_error(pred, target):
     return np.mean(np.abs(pred - target))
 
@@ -98,7 +99,7 @@ def model_setup():
             drop_ratio=args.dropout_ratio,
             gnn_type=args.gnn_type,
         ).to(device)
-
+        print("# of params: ", sum(p.numel() for p in model.parameters()))
         return model, graph_pred_mlp
 
     model = Interactor(
