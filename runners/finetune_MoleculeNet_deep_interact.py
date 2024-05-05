@@ -440,9 +440,9 @@ if __name__ == "__main__":
 
     print(
         "best train: {:.6f}\tval: {:.6f}\ttest: {:.6f}".format(
-            train_roc_list[best_val_idx],
-            val_roc_list[best_val_idx],
-            test_roc_list[best_val_idx],
+            train_roc_list[best_val_idx] * 100,
+            val_roc_list[best_val_idx] * 100,
+            test_roc_list[best_val_idx] * 100,
         )
     )
 
