@@ -321,63 +321,62 @@ def pretrain(
 
                 for i, (task_2d, task_3d) in enumerate(zip(tasks_2d, tasks_3d)):
                     if task_2d == "interatomic_dist":
-                        new_loss = interatomic_distance_loss(
+                        loss_2d = interatomic_distance_loss(
                             batch,
                             final_midstream_2d,
                             pretrain_heads_2d[i],
                             sample_edges,
                         )
                     elif task_2d == "bond_angle":
-                        new_loss = bond_angle_loss(
+                        loss_2d = bond_angle_loss(
                             batch,
                             final_midstream_2d,
                             pretrain_heads_2d[i],
                             bond_angle_indices,
                         )
                     elif task_2d == "dihedral_angle":
-                        new_loss = dihedral_angle_loss(
+                        loss_2d = dihedral_angle_loss(
                             batch,
                             final_midstream_2d,
                             pretrain_heads_2d[i],
                             dihedral_angle_indices,
                         )
 
-                    elif task_3d == "edge_existence":
-                        new_loss = edge_existence_loss(
+                    if task_3d == "edge_existence":
+                        loss_3d = edge_existence_loss(
                             batch,
                             final_midstream_3d,
                             pretrain_heads_3d[i],
                             neg_samples=args.pretrain_neg_link_samples,
                         )
                     elif task_3d == "edge_classification":
-                        new_loss = edge_classification_loss(
+                        loss_3d = edge_classification_loss(
                             batch, final_midstream_3d, pretrain_heads_3d[-1]
                         )
                     elif task_3d == "spd":
-                        new_loss = spd_loss(
+                        loss_3d = spd_loss(
                             batch,
                             final_midstream_3d,
                             pretrain_heads_3d[i],
                             sample_edges,
                         )
                     elif task_3d == "bond_anchor_pred":
-                        new_loss = anchor_pred_loss(
+                        loss_3d = anchor_pred_loss(
                             final_midstream_3d,
                             pretrain_heads_3d[i],
                             bond_angle_indices,
                         )
                     elif task_3d == "dihedral_anchor_pred":
-                        new_loss = anchor_tup_pred_loss(
+                        loss_3d = anchor_tup_pred_loss(
                             final_midstream_3d,
                             pretrain_heads_3d[i],
                             dihedral_angle_indices,
                         )
 
-                    new_loss = new_loss
-                    loss = loss + new_loss
-                    loss_terms.append(new_loss)
-                    loss_dict[task_2d] += new_loss.item()
-                    loss_dict[task_3d] += new_loss.item()
+                    loss = loss + loss_2d + loss_3d
+                    loss_terms.append(loss)
+                    loss_dict[task_2d] += loss_2d.item()
+                    loss_dict[task_3d] += loss_3d.item()
             else:
                 for task_2d, pred_head, midstream, balance_2d in zip(
                     tasks_2d, pretrain_heads_2d, outs_2d, balances_2d
