@@ -372,6 +372,10 @@ def pretrain(
                             pretrain_heads_3d[i],
                             dihedral_angle_indices,
                         )
+                    elif task_3d == "centrality_ranking":
+                        loss_3d = centrality_ranking_loss(
+                            batch, midstream, pred_head, sample_edges
+                        )
 
                     loss = loss + loss_2d + loss_3d
                     loss_terms.append(loss)
