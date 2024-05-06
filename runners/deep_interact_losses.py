@@ -55,7 +55,7 @@ def get_batched_flattened_indices(flattened_matrix, edge_index, batch):
 
     flat_indices = graph_offset[batch_u] + sizes[batch_u] * local_idx_u + local_idx_v
 
-    return flattened_matrix[flat_indices]
+    return flat_indices
 
 
 def get_sample_edges(batch, num_samples):
@@ -74,12 +74,42 @@ def get_sample_edges(batch, num_samples):
     return sample_edges
 
 
+def centrality_ranking_loss(batch, embs, pred_head, sample_pairs):
+    """
+    Given a batch of embeddings, predict the centrality ranking of pairs of atoms
+    """
+    pair_embs = embs[sample_pairs[0]] + embs[sample_pairs[1]]
+    centralities = batch.eig_centrality
+    centrality_a = centralities[sample_pairs[0]]
+    centrality_b = centralities[sample_pairs[1]]
+
+    is_a_central = (centrality_a > centrality_b).long()
+    pred_centralities = pred_head(pair_embs).squeeze()
+
+    loss = bce_loss(pred_centralities, is_a_central.float())
+
+    return loss
+
+
 def spd_loss(batch, embs, pred_head, sample_edges):
     """
     Given a batch of embeddings, predict the shortest path distance between 2 atoms
     """
     spds = batch.spd_mat  # linearized spd matrix
-    spds = get_batched_flattened_indices(spds, sample_edges, batch.batch)
+
+    try:
+        assert spds[spds == 0].numel() == batch.x.shape[0]
+    except Exception as e:
+        # print(e)
+        # pdb.set_trace()
+        return None
+
+    flat_indices = get_batched_flattened_indices(spds, sample_edges, batch.batch)
+    # if step == 41:
+    #     import pdb
+    #     pdb.set_trace()
+
+    spds = spds[flat_indices]
 
     pair_embs = embs[sample_edges[0]] + embs[sample_edges[1]]
 
