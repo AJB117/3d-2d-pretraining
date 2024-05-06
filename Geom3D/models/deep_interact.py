@@ -1,11 +1,7 @@
 import ase
 import torch
 import torch.nn as nn
-from torch_geometric.nn import (
-    global_add_pool,
-    global_mean_pool,
-    radius_graph,
-)
+from torch_geometric.nn import global_add_pool, global_mean_pool, radius_graph, GPSConv
 from .encoders import AtomEncoder
 from .molecule_gnn_model import (
     GINBlock,
@@ -17,12 +13,8 @@ from .molecule_gnn_model import (
 from .schnet import InteractionBlock, GaussianSmearing, ShiftedSoftplus
 from runners.util import apply_init
 
-activation_dict = {
-    "ReLU": nn.ReLU,
-    "GELU": nn.GELU,
-    "SiLU": nn.SiLU,
-    "Swish": nn.SiLU
-}
+activation_dict = {"ReLU": nn.ReLU, "GELU": nn.GELU, "SiLU": nn.SiLU, "Swish": nn.SiLU}
+
 
 class InteractionMLP(nn.Module):
     def __init__(
@@ -33,7 +25,7 @@ class InteractionMLP(nn.Module):
         interaction_agg="cat",
         normalizer=nn.Identity,
         initializer="glorot",
-        activation="GELU"
+        activation="GELU",
     ):
         super(InteractionMLP, self).__init__()
         self.emb_dim = emb_dim
@@ -167,7 +159,7 @@ class Interactor(nn.Module):
                         interaction_agg=interaction_agg,
                         normalizer=normalizer,
                         initializer=args.initialization,
-                        activation=args.interactor_activation
+                        activation=args.interactor_activation,
                     ).to(device)
                     for _ in range(num_interaction_blocks)
                 ]
@@ -180,7 +172,7 @@ class Interactor(nn.Module):
                 interaction_agg=interaction_agg,
                 normalizer=normalizer,
                 initializer=args.initialization,
-                activation=args.interactor_activation
+                activation=args.interactor_activation,
             )
 
             self.interactor = interactor
@@ -247,10 +239,12 @@ class Interactor(nn.Module):
         edge_attr,
         batch,
     ):
+        orig_x = x
         x = self.atom_encoder_2d(x)
         if self.args.transfer:
-            x = x + self.atom_encoder_3d(x)
-        h_list = [x]
+            x_3d = self.atom_encoder_3d(orig_x[:, 0])
+
+        h_list_2d = [x]
         prev = x
         for i in range(self.num_interaction_blocks):
             x = self.blocks_2d[i](x, edge_index, edge_attr)
@@ -261,7 +255,11 @@ class Interactor(nn.Module):
             if self.residual:
                 x = x + prev
 
-            h_list.append(x)
+            if self.args.transfer:
+                combined_x = self.interactors[i](x, x_3d)
+                x, x_3d = combined_x.split(self.emb_dim, dim=-1)
+
+            h_list_2d.append(x)
             prev = x
 
         if self.interaction_rep_2d == "vnode":
@@ -270,13 +268,11 @@ class Interactor(nn.Module):
             x = global_mean_pool(x, batch)
         elif self.interaction_rep_2d == "sum":
             x = global_add_pool(x, batch)
-        
+
         if self.JK == "last":
             return x
         elif self.JK in ("sum", "mean"):
-            means = [
-                global_mean_pool(h, batch) for h in h_list
-            ]
+            means = [global_mean_pool(h, batch) for h in h_list_2d]
             outs = torch.stack(means)
             final = torch.cat([outs, x.unsqueeze(0)], dim=0)
 
@@ -470,6 +466,10 @@ class Block2D(nn.Module):
             layer = GraphSAGEConv(self.emb_dim, self.emb_dim)
         elif gnn_type == "Transformer":
             layer = TransformerConv(self.emb_dim, heads=args.transformer_heads)
+        elif gnn_type == "GPS":
+            layer = GPSConv(
+                self.emb_dim, GINBlock(self.emb_dim, initializer=initializer), heads=2
+            )
         else:
             raise ValueError("Invalid GNN type")
 
@@ -479,7 +479,7 @@ class Block2D(nn.Module):
         self.layer.reset_parameters()
 
     def forward(self, x, edge_index, edge_attr):
-        x = self.layer(x, edge_index, edge_attr)
+        x = self.layer(x, edge_index, edge_attr=edge_attr)
         return x
 
 
