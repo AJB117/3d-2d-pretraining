@@ -33,6 +33,7 @@ from deep_interact_losses import (
     anchor_tup_pred_loss,
     get_sample_edges,
     get_global_atom_indices,
+    centrality_ranking_loss,
 )
 
 # warnings.filterwarnings("ignore")
@@ -238,6 +239,13 @@ def create_pretrain_heads(task, intermediate_dim, device):
             nn.ReLU(),
             nn.Linear(intermediate_dim, 4),
         )
+    elif task == "centrality_ranking":
+        pred_head = nn.Sequential(
+            nn.Linear(intermediate_dim, intermediate_dim),
+            normalizer,
+            nn.ReLU(),
+            nn.Linear(intermediate_dim, 3),
+        )
 
     return pred_head.to(device)
 
@@ -417,6 +425,10 @@ def pretrain(
                         new_loss = anchor_tup_pred_loss(
                             midstream, pred_head, dihedral_angle_indices
                         )
+                    elif task_3d == "centrality_ranking":
+                        new_loss = centrality_ranking_loss(
+                            batch, midstream, pred_head, sample_edges
+                        )
 
                     new_loss = balance_3d * new_loss
                     loss = loss + new_loss
@@ -521,6 +533,9 @@ def main():
         base_dataset = PCQM4Mv2(data_root, transform=None)
         dataset, _, _ = split(base_dataset)
     elif args.dataset == "PCQM4Mv2-pretraining":
+        dataset = PCQM4Mv2(data_root, transform=None)
+        # dataset = split_pretraining(base_dataset)
+    elif args.dataset == "PCQM4Mv2-pretraining-centrality":
         dataset = PCQM4Mv2(data_root, transform=None)
         # dataset = split_pretraining(base_dataset)
     elif args.dataset == "PCQM4Mv2-full-pretraining":

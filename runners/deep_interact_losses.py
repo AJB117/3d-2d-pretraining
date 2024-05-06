@@ -83,10 +83,17 @@ def centrality_ranking_loss(batch, embs, pred_head, sample_pairs):
     centrality_a = centralities[sample_pairs[0]]
     centrality_b = centralities[sample_pairs[1]]
 
-    is_a_central = (centrality_a > centrality_b).long()
+    diff = centrality_a - centrality_b
+    diff[torch.abs(diff) < 1e-4] = 0
+
+    # 3 classes: a is central, b is central, equal
+    is_a_central = torch.zeros_like(diff)
+    is_a_central[diff < 0] = 1
+    is_a_central[diff == 0] = 2
+
     pred_centralities = pred_head(pair_embs).squeeze()
 
-    loss = bce_loss(pred_centralities, is_a_central.float())
+    loss = ce_loss(pred_centralities, is_a_central.long())
 
     return loss
 

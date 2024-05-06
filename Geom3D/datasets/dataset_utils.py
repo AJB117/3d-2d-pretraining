@@ -343,6 +343,15 @@ def enumerateTorsions(mol):
     return torsionList
 
 
+def get_eig_centrality(edge_index, num_nodes):
+    nx_graph = to_networkx(Data(edge_index=edge_index), to_undirected=True)
+    centrality = nx.eigenvector_centrality(nx_graph, max_iter=5000)
+    centrality = torch.tensor(
+        [centrality[i] for i in range(num_nodes)], dtype=torch.float32
+    )
+    return centrality
+
+
 def get_dihedral_angles(mol, bond_angles, edge_set, efficient=False):
     conformer = mol.GetConformers()[0]
     dihedral_angles = []
@@ -495,11 +504,7 @@ def mol_to_graph_data_obj_simple_3D(
             graph = to_networkx(data).to_undirected()
             n_connected_components = len(list(nx.connected_components(graph)))
             if n_connected_components > 1:
-                print(
-                    "Skipping because number of connected components: ",
-                    n_connected_components,
-                )
-                return None, None
+                return None, None, "disconnected"
 
         bond_positions = positions[edge_index[0]] - positions[edge_index[1]]
         bond_lengths = torch.norm(bond_positions, dim=1).reshape(-1, 1)
@@ -529,7 +534,7 @@ def mol_to_graph_data_obj_simple_3D(
                 pdb.set_trace()
 
             if dihedral_angles.numel() == 0:
-                dihedral_angles = torch.tensor([[0, 1, 2, 3, 0]], dtype=torch.float32)
+                dihedral_angles = torch.tensor([[0, 1, 1, 1, 0]], dtype=torch.float32)
                 num_dihedrals = 1
 
         try:
@@ -547,6 +552,12 @@ def mol_to_graph_data_obj_simple_3D(
             print(e)
             pdb.set_trace()
 
+        try:
+            eig_centrality_vec = get_eig_centrality(edge_index, x.shape[0])
+        except Exception as e:
+            print(e)
+            pdb.set_trace()
+
     else:  # mol has no bonds
         num_bond_features = 3  # bond type & direction
         edge_index = torch.empty((2, 0), dtype=torch.long)
@@ -560,7 +571,7 @@ def mol_to_graph_data_obj_simple_3D(
         num_angles = 0
         num_dihedrals = 0
 
-        return None, None
+        return None, None, "no bonds"
 
     # assert that spd_mat is non-empty
     try:
@@ -570,9 +581,9 @@ def mol_to_graph_data_obj_simple_3D(
         pdb.set_trace()
 
     # pad spd_mat to 50 x 50
-    if spd_mat.shape[0] < 50:
-        pad = 50 - spd_mat.shape[0]
-        spd_mat = F.pad(spd_mat, (0, pad, 0, pad), value=63)
+    # if spd_mat.shape[0] < 50:
+    #     pad = 50 - spd_mat.shape[0]
+    #     spd_mat = F.pad(spd_mat, (0, pad, 0, pad), value=63)
 
     num_angles = torch.tensor(num_angles, dtype=torch.long)
     num_dihedrals = torch.tensor(num_dihedrals, dtype=torch.long)
@@ -589,8 +600,9 @@ def mol_to_graph_data_obj_simple_3D(
         spd_mat=spd_mat.flatten(),
         num_angles=num_angles,
         num_dihedrals=num_dihedrals,
+        eig_centrality=eig_centrality_vec,
     )
-    return data, atom_count
+    return data, atom_count, "success"
 
 
 def mol_to_graph_data_obj_MMFF_3D(rdkit_mol, num_conformers):
