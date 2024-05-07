@@ -16,11 +16,12 @@ import warnings
 from tqdm import tqdm
 from torch_geometric.loader import DataLoader
 
+from torch_geometric.nn import global_mean_pool
 from Geom3D.datasets import Molecule3DDataset, MoleculeDatasetQM9, PCQM4Mv2
 from Geom3D.models import Interactor
 from config import args
 from ogb.utils.features import get_atom_feature_dims
-from util import VirtualNodeMol
+from util import VirtualNodeMol, NTXentLoss
 from collections import defaultdict
 from deep_interact_losses import (
     edge_classification_loss,
@@ -277,6 +278,8 @@ def pretrain(
     num_iters = len(loader)
 
     for step, batch in enumerate(l):
+        if step == 10:
+            break
         batch = batch.to(device)
 
         final_embs, midstream_2d_outs, midstream_3d_outs = model(
@@ -302,6 +305,15 @@ def pretrain(
 
             outs_2d = [midstream_2d_outs[i] for i in pretrain_2d_task_indices]
             outs_3d = [midstream_3d_outs[i] for i in pretrain_3d_task_indices]
+
+            if args.cl_per_block:
+                for i, (out_2d, out_3d) in enumerate(zip(outs_2d, outs_3d)):
+                    out_2d_mol = global_mean_pool(out_2d, batch.batch)
+                    out_3d_mol = global_mean_pool(out_3d, batch.batch)
+
+                    loss = loss + NTXentLoss(out_2d_mol, out_3d_mol)
+                    loss_terms.append(loss)
+                    loss_dict["CL_block_{}".format(i)] += loss.item()
 
             if "interatomic_dist" in tasks_2d or "spd" in tasks_3d:
                 sample_edges = get_sample_edges(
@@ -374,7 +386,7 @@ def pretrain(
                         )
                     elif task_3d == "centrality_ranking":
                         loss_3d = centrality_ranking_loss(
-                            batch, midstream, pred_head, sample_edges
+                            batch, final_midstream_3d, pred_head, sample_edges
                         )
 
                     loss = loss + loss_2d + loss_3d

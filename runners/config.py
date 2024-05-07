@@ -349,6 +349,8 @@ parser.add_argument(
     action="store_true",
     help="ablate with all loss functions at the end of the blocks",
 )
+parser.add_argument("--cl_per_block", action="store_true", help="add InfoNCE loss after each interaction")
+
 args = parser.parse_args()
 
 if args.config_dir and args.config_name:
