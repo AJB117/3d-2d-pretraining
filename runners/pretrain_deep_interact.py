@@ -351,7 +351,7 @@ def pretrain(
                         )
                     elif task_3d == "edge_classification":
                         loss_3d = edge_classification_loss(
-                            batch, final_midstream_3d, pretrain_heads_3d[-1]
+                            batch, final_midstream_3d, pretrain_heads_3d[i]
                         )
                     elif task_3d == "spd":
                         loss_3d = spd_loss(
