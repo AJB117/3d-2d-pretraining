@@ -278,8 +278,7 @@ def pretrain(
     num_iters = len(loader)
 
     for step, batch in enumerate(l):
-        if step == 10:
-            break
+
         batch = batch.to(device)
 
         final_embs, midstream_2d_outs, midstream_3d_outs = model(
