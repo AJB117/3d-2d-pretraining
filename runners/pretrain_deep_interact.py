@@ -151,11 +151,17 @@ def save_model(
 
 
 def get_pred_head(
-    in_dim, out_dim, is_shallow=False, normalizer=nn.Identity, activation=nn.ReLU
+    in_dim,
+    out_dim,
+    is_shallow=False,
+    normalizer=nn.Identity,
+    activation=nn.ReLU,
+    act_at_end=False,
 ):
     if is_shallow:
         return nn.Sequential(
             nn.Linear(in_dim, out_dim),
+            activation() if act_at_end else nn.Identity(),
         )
 
     return nn.Sequential(
@@ -214,8 +220,10 @@ def create_pretrain_heads(task, intermediate_dim, device):
             1,
             is_shallow=use_shallow_predictors,
             normalizer=normalizer,
-            activation=nn.Tanh() if args.use_tanh_dihedral else nn.ReLU,
+            activation=nn.Tanh if args.use_tanh_dihedral else nn.ReLU,
+            act_at_end=True if args.use_tanh_dihedral else False,
         )
+        print("checking for tanh pred... ", pred_head)
     elif task == "edge_classification":
         pred_head = get_pred_head(
             intermediate_dim,
