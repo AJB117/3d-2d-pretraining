@@ -259,7 +259,13 @@ def create_pretrain_heads(task, intermediate_dim, device):
             is_shallow=use_shallow_predictors,
             normalizer=normalizer,
         )
-
+    elif task == "betweenness_ranking":
+        pred_head = get_pred_head(
+            intermediate_dim,
+            3,
+            is_shallow=use_shallow_predictors,
+            normalizer=normalizer,
+        )
     elif task == "none":
         pred_head = nn.Identity()
 
