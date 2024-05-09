@@ -372,6 +372,7 @@ parser.add_argument(
     action="store_true",
     help="use shallow linear predictors for pretraining, ow use 2-layer MLPs",
 )
+parser.add_argument("--pretrain_decoding", action="store_true")
 
 args = parser.parse_args()
 
