@@ -614,7 +614,9 @@ class GNN(nn.Module):
                     )
                 )
             elif gnn_type == "GPS":
-                self.gnns.append(GPSConv(emb_dim, GINConv(emb_dim), heads=2))
+                self.gnns.append(
+                    GPSConv(emb_dim, GINConv(emb_dim), heads=2, act="swish")
+                )
 
         ###List of batchnorms
         self.batch_norms = nn.ModuleList()
