@@ -74,11 +74,17 @@ def get_sample_edges(batch, num_samples):
     return sample_edges
 
 
-def centrality_ranking_loss(batch, embs, pred_head, sample_pairs):
+def centrality_ranking_loss(batch, embs_3d, pred_head, sample_pairs, embs_2d=None):
     """
     Given a batch of embeddings, predict the centrality ranking of pairs of atoms
     """
-    pair_embs = embs[sample_pairs[0]] + embs[sample_pairs[1]]
+    if embs_2d is not None:
+        pair_embs_2d = embs_2d[sample_pairs[0]] + embs_2d[sample_pairs[1]]
+        pair_embs_3d = embs_3d[sample_pairs[0]] + embs_3d[sample_pairs[1]]
+        pair_embs = pair_embs_2d + pair_embs_3d
+    else:
+        pair_embs = embs_3d[sample_pairs[0]] + embs_3d[sample_pairs[1]]
+
     centralities = batch.eig_centrality
     centrality_a = centralities[sample_pairs[0]]
     centrality_b = centralities[sample_pairs[1]]
@@ -98,7 +104,38 @@ def centrality_ranking_loss(batch, embs, pred_head, sample_pairs):
     return loss
 
 
-def spd_loss(batch, embs, pred_head, sample_edges):
+def betweenness_ranking_loss(batch, embs_3d, pred_head, sample_pairs, embs_2d=None):
+    """
+    Given a batch of embeddings, predict the centrality ranking of pairs of atoms
+    """
+    if embs_2d is not None:
+        pair_embs_2d = embs_2d[sample_pairs[0]] + embs_2d[sample_pairs[1]]
+        pair_embs_3d = embs_3d[sample_pairs[0]] + embs_3d[sample_pairs[1]]
+        pair_embs = pair_embs_2d + pair_embs_3d
+    else:
+        pair_embs = embs_3d[sample_pairs[0]] + embs_3d[sample_pairs[1]]
+
+    centralities = batch.betweenness_centrality
+
+    centrality_a = centralities[sample_pairs[0]]
+    centrality_b = centralities[sample_pairs[1]]
+
+    diff = centrality_a - centrality_b
+    diff[torch.abs(diff) < 1e-4] = 0
+
+    # 3 classes: a is central, b is central, equal
+    is_a_central = torch.zeros_like(diff)
+    is_a_central[diff < 0] = 1
+    is_a_central[diff == 0] = 2
+
+    pred_centralities = pred_head(pair_embs).squeeze()
+
+    loss = ce_loss(pred_centralities, is_a_central.long())
+
+    return loss
+
+
+def spd_loss(batch, embs_3d, pred_head, sample_edges, embs_2d=None):
     """
     Given a batch of embeddings, predict the shortest path distance between 2 atoms
     """
@@ -112,13 +149,15 @@ def spd_loss(batch, embs, pred_head, sample_edges):
         return None
 
     flat_indices = get_batched_flattened_indices(spds, sample_edges, batch.batch)
-    # if step == 41:
-    #     import pdb
-    #     pdb.set_trace()
 
     spds = spds[flat_indices]
 
-    pair_embs = embs[sample_edges[0]] + embs[sample_edges[1]]
+    if embs_2d is not None:
+        pair_embs_2d = embs_2d[sample_edges[0]] + embs_2d[sample_edges[1]]
+        pair_embs_3d = embs_3d[sample_edges[0]] + embs_3d[sample_edges[1]]
+        pair_embs = pair_embs_2d + pair_embs_3d
+    else:
+        pair_embs = embs_3d[sample_edges[0]] + embs_3d[sample_edges[1]]
 
     pred_spds = pred_head(pair_embs).squeeze()
     true_spds = spds
@@ -131,8 +170,6 @@ def anchor_pred_loss(embs, pred_head, indices):
     """
     Given a batch of embeddings, predict the anchor atom of each bond angle
     """
-    # angles = batch.bond_angles
-    # indices = angles[:, :-1]
 
     permuted_indices = torch.rand_like(indices.float()).argsort(dim=1)
     anchor_indices = (permuted_indices == 0).nonzero()[:, 1]
@@ -153,9 +190,6 @@ def anchor_tup_pred_loss(embs, pred_head, indices):
     """
     Given a batch of embeddings, predict the two anchor atoms of each dihedral angle
     """
-
-    # dihedrals = batch.dihedral_angles
-    # indices = dihedrals[:, :-1]
 
     permuted_indices = torch.rand_like(indices.float()).argsort(dim=1)
     anchor_indices_1 = (permuted_indices == 0).nonzero()[:, 1]
@@ -178,7 +212,7 @@ def anchor_tup_pred_loss(embs, pred_head, indices):
     return loss
 
 
-def interatomic_distance_loss(batch, embs, pred_head, sample_edges):
+def interatomic_distance_loss(batch, embs_2d, pred_head, sample_edges, embs_3d=None):
     """
     Given a batch of embeddings, predict the interatomic distances
     with the given head and return the mean squared error loss.
@@ -191,7 +225,13 @@ def interatomic_distance_loss(batch, embs, pred_head, sample_edges):
     interatomic_distances = F.pad(
         interatomic_distances, (0, max_num_nodes - interatomic_distances.size(0))
     )
-    pair_embs = embs[sample_edges[0]] + embs[sample_edges[1]]
+
+    if embs_3d is not None:
+        pair_embs_2d = embs_2d[sample_edges[0]] + embs_2d[sample_edges[1]]
+        pair_embs_3d = embs_3d[sample_edges[0]] + embs_3d[sample_edges[1]]
+        pair_embs = pair_embs_2d + pair_embs_3d
+    else:
+        pair_embs = embs_2d[sample_edges[0]] + embs_2d[sample_edges[1]]
 
     pred_distances = pred_head(pair_embs).squeeze()
     true_distances = interatomic_distances[sample_edges[0], sample_edges[1]]
@@ -201,21 +241,48 @@ def interatomic_distance_loss(batch, embs, pred_head, sample_edges):
     return loss
 
 
-def bond_angle_loss(batch, embs, pred_head, indices):
+def bond_angle_loss(batch, embs_2d, pred_head, indices, embs_3d=None, rep_type="atom"):
     """
     Given a batch of embeddings, predict the bond angle between three atoms
     """
     angles = batch.bond_angles
 
     true_angles = angles[:, -1]
+    anchor, src, dst = indices[:, 0], indices[:, 1], indices[:, 2]
 
-    # b1_emb = embs[indices[:, 1]] + embs[indices[:, 0]]
-    # b2_emb = embs[indices[:, 2]] + embs[indices[:, 0]]
+    if rep_type == "atom":
+        if embs_3d is not None:
+            angle_emb_2d = torch.cat(
+                [embs_2d[anchor], embs_2d[src], embs_2d[dst]],
+                dim=1,
+            ).to(embs_2d.device)
+            angle_emb_3d = torch.cat(
+                [embs_3d[anchor], embs_3d[src], embs_3d[dst]],
+                dim=1,
+            ).to(embs_3d.device)
+            angle_emb = angle_emb_2d + angle_emb_3d
+        else:
+            angle_emb = torch.cat(
+                [embs_2d[anchor], embs_2d[src], embs_2d[dst]],
+                dim=1,
+            ).to(embs_2d.device)
+    elif rep_type == "bond":
+        if embs_3d is not None:
+            b1_emb_2d = embs_2d[src] + embs_2d[anchor]
+            b2_emb_2d = embs_2d[dst] + embs_2d[anchor]
 
-    # angle_embs = torch.cat([b1_emb, b2_emb], dim=1).to(embs.device)
-    angle_emb = torch.cat(
-        [embs[indices[:, 0]], embs[indices[:, 1]], embs[indices[:, 2]]], dim=1
-    ).to(embs.device)
+            b1_emb_3d = embs_3d[src] + embs_3d[anchor]
+            b2_emb_3d = embs_3d[dst] + embs_3d[anchor]
+
+            angle_emb_2d = torch.cat([b1_emb_2d, b2_emb_2d], dim=1).to(embs_2d.device)
+            angle_emb_3d = torch.cat([b1_emb_3d, b2_emb_3d], dim=1).to(embs_3d.device)
+
+            angle_emb = angle_emb_2d + angle_emb_3d
+        else:
+            b1_emb = embs_2d[src] + embs_2d[anchor]
+            b2_emb = embs_2d[dst] + embs_2d[anchor]
+
+            angle_emb = torch.cat([b1_emb, b2_emb], dim=1).to(embs_2d.device)
 
     pred_angles = pred_head(angle_emb).squeeze()
     loss = mse_loss(pred_angles, true_angles)
@@ -223,30 +290,75 @@ def bond_angle_loss(batch, embs, pred_head, indices):
     return loss
 
 
-def dihedral_angle_loss(batch, embs, pred_head, indices):
+def dihedral_angle_loss(
+    batch, embs_2d, pred_head, indices, embs_3d=None, rep_type="atom"
+):
     """
     Given a batch of embeddings, predict the dihedral angle between 4 atoms/2 bonds
     """
     dihedrals = batch.dihedral_angles
 
     true_angles = torch.nan_to_num(dihedrals[:, -1])
+    i, j, k, l = indices[:, 0], indices[:, 1], indices[:, 2], indices[:, 3]
 
-    # b1_emb = embs[indices[:, 0]] + embs[indices[:, 1]]
-    # b2_emb = embs[indices[:, 2]] + embs[indices[:, 1]]
-    # b3_emb = embs[indices[:, 3]] + embs[indices[:, 2]]
+    if rep_type == "atom":
+        if embs_3d is not None:
+            dihedral_emb_2d = torch.cat(
+                [
+                    embs_2d[i],
+                    embs_2d[j],
+                    embs_2d[k],
+                    embs_2d[l],
+                ],
+                dim=1,
+            ).to(embs_2d.device)
 
-    dihedral_embs = torch.cat(
-        [
-            # b1_emb,
-            # b2_emb,
-            # b3_emb,
-            embs[indices[:, 0]],
-            embs[indices[:, 1]],
-            embs[indices[:, 2]],
-            embs[indices[:, 3]],
-        ],
-        dim=1,
-    ).to(embs.device)
+            dihedral_emb_3d = torch.cat(
+                [
+                    embs_3d[i],
+                    embs_3d[j],
+                    embs_3d[k],
+                    embs_3d[l],
+                ],
+                dim=1,
+            ).to(embs_3d.device)
+            dihedral_embs = dihedral_emb_2d + dihedral_emb_3d
+        else:
+            dihedral_embs = torch.cat(
+                [
+                    embs_2d[i],
+                    embs_2d[j],
+                    embs_2d[k],
+                    embs_2d[l],
+                ],
+                dim=1,
+            ).to(embs_2d.device)
+    elif rep_type == "bond":
+        if embs_3d is not None:
+            b1_emb_2d = embs_2d[i] + embs_2d[j]
+            b2_emb_2d = embs_2d[k] + embs_2d[j]
+            b3_emb_2d = embs_2d[l] + embs_2d[k]
+
+            b1_emb_3d = embs_3d[i] + embs_3d[j]
+            b2_emb_3d = embs_3d[k] + embs_3d[j]
+            b3_emb_3d = embs_3d[l] + embs_3d[k]
+
+            dihedral_emb_2d = torch.cat([b1_emb_2d, b2_emb_2d, b3_emb_2d], dim=1).to(
+                embs_2d.device
+            )
+            dihedral_emb_3d = torch.cat([b1_emb_3d, b2_emb_3d, b3_emb_3d], dim=1).to(
+                embs_3d.device
+            )
+
+            dihedral_embs = dihedral_emb_2d + dihedral_emb_3d
+        else:
+            b1_emb = embs_2d[i] + embs_2d[j]
+            b2_emb = embs_2d[k] + embs_2d[j]
+            b3_emb = embs_2d[l] + embs_2d[k]
+
+            dihedral_embs = torch.cat([b1_emb, b2_emb, b3_emb], dim=1).to(
+                embs_2d.device
+            )
 
     pred_angles = pred_head(dihedral_embs).squeeze()
     loss = mse_loss(pred_angles, true_angles)
@@ -283,13 +395,20 @@ def edge_existence_loss(batch, embs, pred_head, neg_samples=50):
     return loss
 
 
-def edge_classification_loss(batch, embs, pred_head):
+def edge_classification_loss(batch, embs_3d, pred_head, embs_2d=None):
     """
     Given a batch of embeddings, predict the bond type between two atoms
     """
     edges = batch.edge_index
     edge_attrs = batch.edge_attr
-    edge_embs = embs[edges[0]] + embs[edges[1]]
+
+    if embs_2d is not None:
+        pair_emb_2d = embs_2d[edges[0]] + embs_2d[edges[1]]
+        pair_emb_3d = embs_3d[edges[0]] + embs_3d[edges[1]]
+
+        edge_embs = pair_emb_2d + pair_emb_3d
+    else:
+        edge_embs = embs_3d[edges[0]] + embs_3d[edges[1]]
 
     pred = pred_head(edge_embs).squeeze()
 

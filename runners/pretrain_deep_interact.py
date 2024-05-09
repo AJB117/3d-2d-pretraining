@@ -1,3 +1,4 @@
+import matplotlib.pyplot as plt
 from torchviz import make_dot
 import wandb
 import sys
@@ -13,6 +14,7 @@ import torch.optim as optim
 import subprocess
 import warnings
 
+from Geom3D.models.encoders import AtomEncoder
 from tqdm import tqdm
 from torch_geometric.loader import DataLoader
 
@@ -35,6 +37,7 @@ from deep_interact_losses import (
     get_sample_edges,
     get_global_atom_indices,
     centrality_ranking_loss,
+    betweenness_ranking_loss,
 )
 
 # warnings.filterwarnings("ignore")
@@ -147,32 +150,20 @@ def save_model(
     torch.save(saver_dict, output_model_path)
 
 
-def CL_acc(x1, x2, pos_mask=None):
-    batch_size, _ = x1.size()
-    if (
-        x1.shape != x2.shape and pos_mask is None
-    ):  # if we have noisy samples our x2 has them appended at the end so we just take the non noised ones to calculate the similaritiy
-        x2 = x2[:batch_size]
-    sim_matrix = torch.einsum("ik,jk->ij", x1, x2)
+def get_pred_head(
+    in_dim, out_dim, is_shallow=False, normalizer=nn.Identity, activation=nn.ReLU
+):
+    if is_shallow:
+        return nn.Sequential(
+            nn.Linear(in_dim, out_dim),
+        )
 
-    x1_abs = x1.norm(dim=1)
-    x2_abs = x2.norm(dim=1)
-    sim_matrix = sim_matrix / torch.einsum("i,j->ij", x1_abs, x2_abs)
-
-    preds = (sim_matrix + 1) / 2 > 0.5
-    if pos_mask is None:  # if we are comparing global with global
-        pos_mask = torch.eye(batch_size, device=x1.device)
-    neg_mask = 1 - pos_mask
-
-    num_positives = len(x1)
-    num_negatives = len(x1) * (len(x2) - 1)
-    true_positives = (
-        num_positives - ((preds.long() - pos_mask) * pos_mask).count_nonzero()
+    return nn.Sequential(
+        nn.Linear(in_dim, in_dim),
+        normalizer,
+        activation(),
+        nn.Linear(in_dim, out_dim),
     )
-    true_negatives = (
-        num_negatives - (((~preds).long() - neg_mask) * neg_mask).count_nonzero()
-    )
-    return (true_positives / num_positives + true_negatives / num_negatives) / 2
 
 
 def create_pretrain_heads(task, intermediate_dim, device):
@@ -184,47 +175,60 @@ def create_pretrain_heads(task, intermediate_dim, device):
     else:
         normalizer = nn.Identity()
 
+    use_shallow_predictors = args.use_shallow_predictors
+
     if task == "interatomic_dist":
-        pred_head = nn.Sequential(
-            nn.Linear(intermediate_dim, intermediate_dim),
-            normalizer,
-            nn.ReLU(),
-            nn.Linear(intermediate_dim, 1),
+        pred_head = get_pred_head(
+            intermediate_dim,
+            1,
+            is_shallow=use_shallow_predictors,
+            normalizer=normalizer,
         )
     elif task == "edge_existence":
-        pred_head = nn.Sequential(
-            nn.Linear(intermediate_dim, intermediate_dim),
-            normalizer,
-            nn.ReLU(),
-            nn.Linear(intermediate_dim, 1),
+        pred_head = get_pred_head(
+            intermediate_dim,
+            1,
+            is_shallow=use_shallow_predictors,
+            normalizer=normalizer,
         )
     elif task == "bond_angle":
-        pred_head = nn.Sequential(
-            nn.Linear(intermediate_dim * 3, intermediate_dim),
-            normalizer,
-            nn.ReLU(),
-            nn.Linear(intermediate_dim, 1),
+        if args.rep_type == "atom":
+            in_dim = intermediate_dim * 3
+        elif args.rep_type == "bond":
+            in_dim = intermediate_dim * 2
+
+        pred_head = get_pred_head(
+            in_dim,
+            1,
+            is_shallow=use_shallow_predictors,
+            normalizer=normalizer,
         )
     elif task == "dihedral_angle":
-        pred_head = nn.Sequential(
-            nn.Linear(intermediate_dim * 4, intermediate_dim),
-            normalizer,
-            nn.ReLU(),
-            nn.Linear(intermediate_dim, 1),
+        if args.rep_type == "atom":
+            in_dim = intermediate_dim * 4
+        elif args.rep_type == "bond":
+            in_dim = intermediate_dim * 3
+
+        pred_head = get_pred_head(
+            in_dim,
+            1,
+            is_shallow=use_shallow_predictors,
+            normalizer=normalizer,
+            activation=nn.Tanh() if args.use_tanh_dihedral else nn.ReLU,
         )
     elif task == "edge_classification":
-        pred_head = nn.Sequential(
-            nn.Linear(intermediate_dim, intermediate_dim),
-            normalizer,
-            nn.ReLU(),
-            nn.Linear(intermediate_dim, n_bond_types),
+        pred_head = get_pred_head(
+            intermediate_dim,
+            n_bond_types,
+            is_shallow=use_shallow_predictors,
+            normalizer=normalizer,
         )
     elif task == "spd":
-        pred_head = nn.Sequential(
-            nn.Linear(intermediate_dim, intermediate_dim),
-            normalizer,
-            nn.ReLU(),
-            nn.Linear(intermediate_dim, 64),  # max number of shortest path distances
+        pred_head = get_pred_head(
+            intermediate_dim,
+            64,
+            is_shallow=use_shallow_predictors,
+            normalizer=normalizer,
         )
     elif task == "bond_anchor_pred":
         pred_head = nn.Sequential(
@@ -241,12 +245,15 @@ def create_pretrain_heads(task, intermediate_dim, device):
             nn.Linear(intermediate_dim, 4),
         )
     elif task == "centrality_ranking":
-        pred_head = nn.Sequential(
-            nn.Linear(intermediate_dim, intermediate_dim),
-            normalizer,
-            nn.ReLU(),
-            nn.Linear(intermediate_dim, 3),
+        pred_head = get_pred_head(
+            intermediate_dim,
+            3,
+            is_shallow=use_shallow_predictors,
+            normalizer=normalizer,
         )
+
+    elif task == "none":
+        pred_head = nn.Identity()
 
     return pred_head.to(device)
 
@@ -264,6 +271,8 @@ def pretrain(
     pretrain_heads_2d=None,
     pretrain_heads_3d=None,
     optimal_loss=1e10,
+    projector_l=None,
+    projector_r=None,
 ):
     loss_dict = defaultdict(int)
     start_time = time.time()
@@ -278,7 +287,6 @@ def pretrain(
     num_iters = len(loader)
 
     for step, batch in enumerate(l):
-
         batch = batch.to(device)
 
         final_embs, midstream_2d_outs, midstream_3d_outs = model(
@@ -304,15 +312,6 @@ def pretrain(
 
             outs_2d = [midstream_2d_outs[i] for i in pretrain_2d_task_indices]
             outs_3d = [midstream_3d_outs[i] for i in pretrain_3d_task_indices]
-
-            if args.cl_per_block:
-                for i, (out_2d, out_3d) in enumerate(zip(outs_2d, outs_3d)):
-                    out_2d_mol = global_mean_pool(out_2d, batch.batch)
-                    out_3d_mol = global_mean_pool(out_3d, batch.batch)
-
-                    loss = loss + NTXentLoss(out_2d_mol, out_3d_mol)
-                    loss_terms.append(loss)
-                    loss_dict["CL_block_{}".format(i)] += loss.item()
 
             if "interatomic_dist" in tasks_2d or "spd" in tasks_3d:
                 sample_edges = get_sample_edges(
@@ -385,7 +384,17 @@ def pretrain(
                         )
                     elif task_3d == "centrality_ranking":
                         loss_3d = centrality_ranking_loss(
-                            batch, final_midstream_3d, pretrain_heads_3d[i], sample_edges
+                            batch,
+                            final_midstream_3d,
+                            pretrain_heads_3d[i],
+                            sample_edges,
+                        )
+                    elif task_3d == "betweenness_ranking":
+                        loss_3d = betweenness_ranking_loss(
+                            batch,
+                            final_midstream_3d,
+                            pretrain_heads_3d[i],
+                            sample_edges,
                         )
 
                     loss = loss + loss_2d + loss_3d
@@ -393,24 +402,39 @@ def pretrain(
                     loss_dict[task_2d] += loss_2d.item()
                     loss_dict[task_3d] += loss_3d.item()
             else:
-                for task_2d, pred_head, midstream, balance_2d in zip(
-                    tasks_2d, pretrain_heads_2d, outs_2d, balances_2d
+                for i, (task_2d, pred_head, midstream, balance_2d) in enumerate(
+                    zip(tasks_2d, pretrain_heads_2d, outs_2d, balances_2d)
                 ):
+                    midstream_3d = outs_3d[i] if args.mix_embs_pretrain else None
                     if task_2d == "interatomic_dist":
                         new_loss = interatomic_distance_loss(
                             batch,
                             midstream,
                             pred_head,
                             sample_edges,
+                            embs_3d=midstream_3d,
                         )
                     elif task_2d == "bond_angle":
                         new_loss = bond_angle_loss(
-                            batch, midstream, pred_head, bond_angle_indices
+                            batch,
+                            midstream,
+                            pred_head,
+                            bond_angle_indices,
+                            embs_3d=midstream_3d,
+                            rep_type=args.rep_type,
                         )
                     elif task_2d == "dihedral_angle":
                         new_loss = dihedral_angle_loss(
-                            batch, midstream, pred_head, dihedral_angle_indices
+                            batch,
+                            midstream,
+                            pred_head,
+                            dihedral_angle_indices,
+                            embs_3d=midstream_3d,
+                            rep_type=args.rep_type,
                         )
+
+                    elif task_2d == "none":
+                        continue
 
                     new_loss = balance_2d * new_loss
                     loss = loss + new_loss
@@ -420,6 +444,7 @@ def pretrain(
                 for task_3d, pred_head, midstream, balance_3d in zip(
                     tasks_3d, pretrain_heads_3d, outs_3d, balances_3d
                 ):
+                    midstream_2d = outs_2d[i] if args.mix_embs_pretrain else None
                     if task_3d == "edge_existence":
                         new_loss = edge_existence_loss(
                             batch,
@@ -428,9 +453,13 @@ def pretrain(
                             neg_samples=args.pretrain_neg_link_samples,
                         )
                     elif task_3d == "edge_classification":
-                        new_loss = edge_classification_loss(batch, midstream, pred_head)
+                        new_loss = edge_classification_loss(
+                            batch, midstream, pred_head, midstream_2d
+                        )
                     elif task_3d == "spd":
-                        new_loss = spd_loss(batch, midstream, pred_head, sample_edges)
+                        new_loss = spd_loss(
+                            batch, midstream, pred_head, sample_edges, midstream_2d
+                        )
                     elif task_3d == "bond_anchor_pred":
                         new_loss = anchor_pred_loss(
                             midstream, pred_head, bond_angle_indices
@@ -441,8 +470,14 @@ def pretrain(
                         )
                     elif task_3d == "centrality_ranking":
                         new_loss = centrality_ranking_loss(
-                            batch, midstream, pred_head, sample_edges
+                            batch, midstream, pred_head, sample_edges, midstream_2d
                         )
+                    elif task_3d == "betweenness_ranking":
+                        new_loss = betweenness_ranking_loss(
+                            batch, midstream, pred_head, sample_edges, midstream_2d
+                        )
+                    elif task_3d == "none":
+                        continue
 
                     new_loss = balance_3d * new_loss
                     loss = loss + new_loss
@@ -579,6 +614,7 @@ def main():
         batch_norm=args.batch_norm,
         layer_norm=args.layer_norm,
     ).to(device)
+    print(model)
 
     if args.JK == "concat":
         intermediate_dim = (args.num_layer + 1) * args.emb_dim
@@ -608,13 +644,20 @@ def main():
             nn.Linear(intermediate_dim, 1),
         ).to(device)
 
+    if args.pretrain_decoding == "outer_product":
+        head_dim = 32
+        projector_l = nn.Linear(args.emb_dim, head_dim)
+        projector_r = nn.Linear(args.emb_dim, head_dim)
+    else:
+        head_dim = args.emb_dim
+        projector_l = None
+        projector_r = None
+
     pretrain_heads_2d = [
-        create_pretrain_heads(task, intermediate_dim, device)
-        for task in args.pretrain_2d_tasks
+        create_pretrain_heads(task, head_dim, device) for task in args.pretrain_2d_tasks
     ]
     pretrain_heads_3d = [
-        create_pretrain_heads(task, intermediate_dim, device)
-        for task in args.pretrain_3d_tasks
+        create_pretrain_heads(task, head_dim, device) for task in args.pretrain_3d_tasks
     ]
 
     for layer in graph_pred_mlp:
@@ -647,6 +690,10 @@ def main():
         model_param_group.append({"params": head.parameters(), "lr": args.lr})
     for head in pretrain_heads_3d:
         model_param_group.append({"params": head.parameters(), "lr": args.lr})
+
+    if projector_l is not None and projector_r is not None:
+        model_param_group.append({"params": projector_l.parameters(), "lr": args.lr})
+        model_param_group.append({"params": projector_r.parameters(), "lr": args.lr})
 
     # model
     model_param_group.append(
@@ -716,6 +763,8 @@ def main():
             pretrain_heads_2d=pretrain_heads_2d,
             pretrain_heads_3d=pretrain_heads_3d,
             optimal_loss=optimal_loss,
+            projector_l=projector_l,
+            projector_r=projector_r,
         )
 
     # to aggregate later with a separate script

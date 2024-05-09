@@ -349,7 +349,29 @@ parser.add_argument(
     action="store_true",
     help="ablate with all loss functions at the end of the blocks",
 )
-parser.add_argument("--cl_per_block", action="store_true", help="add InfoNCE loss after each interaction")
+parser.add_argument(
+    "--weight_sharing",
+    action="store_true",
+    help="weight sharing of message-passing layers prior to interactions",
+)
+parser.add_argument("--interact_every_block", action="store_true")
+
+parser.add_argument("--rep_type", choices=["atom", "bond"], default="atom")
+parser.add_argument(
+    "--mix_embs_pretrain",
+    action="store_true",
+    help="mix embeddings when predicting pretraining features",
+)
+parser.add_argument(
+    "--use_tanh_dihedral",
+    action="store_true",
+    help="use tanh activaiton for dihedral angle prediction",
+)
+parser.add_argument(
+    "--use_shallow_predictors",
+    action="store_true",
+    help="use shallow linear predictors for pretraining, ow use 2-layer MLPs",
+)
 
 args = parser.parse_args()
 
