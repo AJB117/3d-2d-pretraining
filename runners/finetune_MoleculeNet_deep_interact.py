@@ -123,6 +123,7 @@ def model_setup():
         if isinstance(layer, nn.Linear):
             apply_init(args.initialization)(layer.weight)
 
+    print("# of params: ", sum(p.numel() for p in model.parameters()))
     return model, graph_pred_mlp
 
 
