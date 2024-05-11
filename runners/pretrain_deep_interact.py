@@ -215,15 +215,19 @@ def create_pretrain_heads(task, intermediate_dim, device):
         elif args.rep_type == "bond":
             in_dim = intermediate_dim * 3
 
+        if args.classify_dihedrals:
+            out_dim = 10 if args.symm_dihedrals else 20  # classification
+        else:
+            out_dim = 1  # regression
+
         pred_head = get_pred_head(
             in_dim,
-            1,
+            out_dim,
             is_shallow=use_shallow_predictors,
             normalizer=normalizer,
             activation=nn.Tanh if args.use_tanh_dihedral else nn.ReLU,
             act_at_end=True if args.use_tanh_dihedral else False,
         )
-        print("checking for tanh pred... ", pred_head)
     elif task == "edge_classification":
         pred_head = get_pred_head(
             intermediate_dim,
@@ -255,7 +259,7 @@ def create_pretrain_heads(task, intermediate_dim, device):
     elif task == "centrality_ranking":
         pred_head = get_pred_head(
             intermediate_dim,
-            3,
+            2,
             is_shallow=use_shallow_predictors,
             normalizer=normalizer,
         )
@@ -342,6 +346,7 @@ def pretrain(
             if args.all_losses_at_end:
                 final_midstream_2d = midstream_2d_outs[-1]
                 final_midstream_3d = midstream_3d_outs[-1]
+                acc = 0
 
                 for i, (task_2d, task_3d) in enumerate(zip(tasks_2d, tasks_3d)):
                     if task_2d == "interatomic_dist":
@@ -364,6 +369,8 @@ def pretrain(
                             final_midstream_2d,
                             pretrain_heads_2d[i],
                             dihedral_angle_indices,
+                            symm=args.symm_dihedrals,
+                            as_classification=args.classify_dihedrals,
                         )
 
                     if task_3d == "edge_existence":
@@ -378,7 +385,7 @@ def pretrain(
                             batch, final_midstream_3d, pretrain_heads_3d[i]
                         )
                     elif task_3d == "spd":
-                        loss_3d = spd_loss(
+                        loss_3d, acc = spd_loss(
                             batch,
                             final_midstream_3d,
                             pretrain_heads_3d[i],
@@ -397,14 +404,14 @@ def pretrain(
                             dihedral_angle_indices,
                         )
                     elif task_3d == "centrality_ranking":
-                        loss_3d = centrality_ranking_loss(
+                        loss_3d, acc = centrality_ranking_loss(
                             batch,
                             final_midstream_3d,
                             pretrain_heads_3d[i],
                             sample_edges,
                         )
                     elif task_3d == "betweenness_ranking":
-                        loss_3d = betweenness_ranking_loss(
+                        loss_3d, acc = betweenness_ranking_loss(
                             batch,
                             final_midstream_3d,
                             pretrain_heads_3d[i],
@@ -419,6 +426,7 @@ def pretrain(
                 for i, (task_2d, pred_head, midstream, balance_2d) in enumerate(
                     zip(tasks_2d, pretrain_heads_2d, outs_2d, balances_2d)
                 ):
+                    acc = None
                     midstream_3d = outs_3d[i] if args.mix_embs_pretrain else None
                     if task_2d == "interatomic_dist":
                         new_loss = interatomic_distance_loss(
@@ -438,13 +446,15 @@ def pretrain(
                             rep_type=args.rep_type,
                         )
                     elif task_2d == "dihedral_angle":
-                        new_loss = dihedral_angle_loss(
+                        new_loss, acc = dihedral_angle_loss(
                             batch,
                             midstream,
                             pred_head,
                             dihedral_angle_indices,
                             embs_3d=midstream_3d,
                             rep_type=args.rep_type,
+                            symm=args.symm_dihedrals,
+                            as_classification=args.classify_dihedrals,
                         )
 
                     elif task_2d == "none":
@@ -455,9 +465,13 @@ def pretrain(
                     loss_terms.append(new_loss)
                     loss_dict[task_2d] += new_loss.item()
 
+                    if acc is not None:
+                        loss_dict[task_2d + "_acc"] += acc
+
                 for task_3d, pred_head, midstream, balance_3d in zip(
                     tasks_3d, pretrain_heads_3d, outs_3d, balances_3d
                 ):
+                    acc = 0
                     midstream_2d = outs_2d[i] if args.mix_embs_pretrain else None
                     if task_3d == "edge_existence":
                         new_loss = edge_existence_loss(
@@ -467,11 +481,11 @@ def pretrain(
                             neg_samples=args.pretrain_neg_link_samples,
                         )
                     elif task_3d == "edge_classification":
-                        new_loss = edge_classification_loss(
+                        new_loss, acc = edge_classification_loss(
                             batch, midstream, pred_head, midstream_2d
                         )
                     elif task_3d == "spd":
-                        new_loss = spd_loss(
+                        new_loss, acc = spd_loss(
                             batch, midstream, pred_head, sample_edges, midstream_2d
                         )
                     elif task_3d == "bond_anchor_pred":
@@ -483,11 +497,11 @@ def pretrain(
                             midstream, pred_head, dihedral_angle_indices
                         )
                     elif task_3d == "centrality_ranking":
-                        new_loss = centrality_ranking_loss(
+                        new_loss, acc = centrality_ranking_loss(
                             batch, midstream, pred_head, sample_edges, midstream_2d
                         )
                     elif task_3d == "betweenness_ranking":
-                        new_loss = betweenness_ranking_loss(
+                        new_loss, acc = betweenness_ranking_loss(
                             batch, midstream, pred_head, sample_edges, midstream_2d
                         )
                     elif task_3d == "none":
@@ -497,6 +511,9 @@ def pretrain(
                     loss = loss + new_loss
                     loss_terms.append(new_loss)
                     loss_dict[task_3d] += new_loss.item()
+
+                    if acc is not None:
+                        loss_dict[task_3d + "_acc"] += acc
 
         elif args.pretraining_strategy == "masking":
             pass  # ! TODO: Implement masking strategy

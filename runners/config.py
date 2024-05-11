@@ -373,6 +373,16 @@ parser.add_argument(
     help="use shallow linear predictors for pretraining, ow use 2-layer MLPs",
 )
 parser.add_argument("--pretrain_decoding", action="store_true")
+parser.add_argument(
+    "--symm_dihedrals",
+    action="store_true",
+    help="symmetrize dihedral angles for pretraining",
+)
+parser.add_argument(
+    "--classify_dihedrals",
+    action="store_true",
+    help="treat dihedral prediction as classification task; 20 bins without symm, 10 bins with symm",
+)
 
 args = parser.parse_args()
 
