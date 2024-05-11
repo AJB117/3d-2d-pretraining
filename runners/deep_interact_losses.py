@@ -1,3 +1,4 @@
+import matplotlib.pyplot as plt
 import fun
 import pdb
 import torch
@@ -74,6 +75,10 @@ def get_sample_edges(batch, num_samples):
     return sample_edges
 
 
+def distance_ranking_loss(batch, embs_3d, pred_head, sample_pairs, embs_2d=None):
+    pass
+
+
 def centrality_ranking_loss(batch, embs_3d, pred_head, sample_pairs, embs_2d=None):
     """
     Given a batch of embeddings, predict the centrality ranking of pairs of atoms
@@ -90,18 +95,23 @@ def centrality_ranking_loss(batch, embs_3d, pred_head, sample_pairs, embs_2d=Non
     centrality_b = centralities[sample_pairs[1]]
 
     diff = centrality_a - centrality_b
-    diff[torch.abs(diff) < 1e-4] = 0
+    diff[torch.abs(diff) < 1e-2] = 0
 
-    # 3 classes: a is central, b is central, equal
+    # 2 classes: a is central, b is central
     is_a_central = torch.zeros_like(diff)
     is_a_central[diff < 0] = 1
     is_a_central[diff == 0] = 2
 
     pred_centralities = pred_head(pair_embs).squeeze()
+    is_a_central = is_a_central
+
+    acc = ((torch.argmax(pred_centralities, dim=1) == is_a_central).sum().item()) / len(
+        is_a_central
+    )
 
     loss = ce_loss(pred_centralities, is_a_central.long())
 
-    return loss
+    return loss, acc
 
 
 def betweenness_ranking_loss(batch, embs_3d, pred_head, sample_pairs, embs_2d=None):
@@ -130,9 +140,13 @@ def betweenness_ranking_loss(batch, embs_3d, pred_head, sample_pairs, embs_2d=No
 
     pred_centralities = pred_head(pair_embs).squeeze()
 
+    acc = ((torch.argmax(pred_centralities, dim=1) == is_a_central).sum().item()) / len(
+        is_a_central
+    )
+
     loss = ce_loss(pred_centralities, is_a_central.long())
 
-    return loss
+    return loss, acc
 
 
 def spd_loss(batch, embs_3d, pred_head, sample_edges, embs_2d=None):
@@ -160,10 +174,13 @@ def spd_loss(batch, embs_3d, pred_head, sample_edges, embs_2d=None):
         pair_embs = embs_3d[sample_edges[0]] + embs_3d[sample_edges[1]]
 
     pred_spds = pred_head(pair_embs).squeeze()
+
+    acc = (torch.argmax(pred_spds, dim=1) == spds).sum().item() / len(spds)
+
     true_spds = spds
     loss = ce_loss(pred_spds, true_spds)
 
-    return loss
+    return loss, acc
 
 
 def anchor_pred_loss(embs, pred_head, indices):
@@ -291,12 +308,24 @@ def bond_angle_loss(batch, embs_2d, pred_head, indices, embs_3d=None, rep_type="
 
 
 def dihedral_angle_loss(
-    batch, embs_2d, pred_head, indices, embs_3d=None, rep_type="atom"
+    batch,
+    embs_2d,
+    pred_head,
+    indices,
+    embs_3d=None,
+    rep_type="atom",
+    symm=False,
+    visualize=False,
+    as_classification=False,
 ):
     """
     Given a batch of embeddings, predict the dihedral angle between 4 atoms/2 bonds
     """
     dihedrals = batch.dihedral_angles
+
+    if symm:
+        # reflect all angles to be positive
+        dihedrals[dihedrals < 0] = dihedrals[dihedrals < 0] * -1
 
     true_angles = torch.nan_to_num(dihedrals[:, -1])
     i, j, k, l = indices[:, 0], indices[:, 1], indices[:, 2], indices[:, 3]
@@ -360,10 +389,28 @@ def dihedral_angle_loss(
                 embs_2d.device
             )
 
-    pred_angles = pred_head(dihedral_embs).squeeze()
-    loss = mse_loss(pred_angles, true_angles)
+    if as_classification:
+        # bucket the angles into 10 classes
+        true_angles = torch.floor(true_angles * 10).long()
+        true_angles[true_angles == 10] = 9
 
-    return loss
+        pred_angles = pred_head(dihedral_embs).squeeze()
+
+        acc = (torch.argmax(pred_angles, dim=1) == true_angles).sum().item() / len(
+            true_angles
+        )
+        loss = ce_loss(pred_angles, true_angles)
+    else:
+        pred_angles = pred_head(dihedral_embs).squeeze()
+        acc = None
+        loss = mse_loss(pred_angles, true_angles)
+
+    if visualize:
+        plt.hist(pred_angles.detach().cpu().numpy(), bins=50, color="red", alpha=0.5)
+        plt.hist(true_angles.detach().cpu().numpy(), bins=50, color="blue", alpha=0.5)
+        plt.show()
+
+    return loss, acc
 
 
 def edge_existence_loss(batch, embs, pred_head, neg_samples=50):
@@ -414,6 +461,8 @@ def edge_classification_loss(batch, embs_3d, pred_head, embs_2d=None):
 
     pos_labels = edge_attrs[:, 0]
 
+    acc = (torch.argmax(pred, dim=1) == pos_labels).sum().item() / len(pos_labels)
+
     loss = ce_loss(pred, pos_labels)
 
-    return loss
+    return loss, acc
