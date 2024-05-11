@@ -500,10 +500,6 @@ if __name__ == "__main__":
         )
     )
 
-    with open("qm8_performance.csv", "r") as f:
-        reader = csv.reader(f)
-        num_rows = len(list(reader))
-
     loss_dict = {
         f"train_mae_{args.task}": train_mae_list[best_val_idx],
         f"val_mae_{args.task}": val_mae_list[best_val_idx],
