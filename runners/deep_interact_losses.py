@@ -390,10 +390,14 @@ def dihedral_angle_loss(
             )
 
     if as_classification:
-        # bucket the angles into 10 classes
-        true_angles = torch.floor(true_angles * 10).long()
-        true_angles[true_angles == 10] = 9
+        if symm:
+            n_classes = 10
+            true_angles = torch.floor(true_angles * n_classes).long()
+        else:
+            n_classes = 20
+            true_angles = torch.floor((true_angles + 1) * n_classes).long()
 
+        true_angles = true_angles.clamp(0, n_classes - 1)
         pred_angles = pred_head(dihedral_embs).squeeze()
 
         acc = (torch.argmax(pred_angles, dim=1) == true_angles).sum().item() / len(
