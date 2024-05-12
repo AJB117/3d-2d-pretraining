@@ -113,6 +113,7 @@ def model_setup():
             readout=args.SchNet_readout,
             node_class=node_class,
         )
+        return model_3d, graph_pred_mlp, model_2d, model_3d
     elif args.mode == "2d":
         model_2d = GNN(
             args.num_layer,
@@ -198,6 +199,7 @@ def train(epoch, device, loader, optimizer):
 
         if args.mode != "method":  # assumes 3d
             mol_rep = model(batch.x, batch.positions, batch=batch.batch)
+            pred = graph_pred_mlp(mol_rep).squeeze()
         else:
             if args.use_3d_only:
                 mol_rep = model.forward_3d(batch.x, batch.positions, batch.batch)
@@ -270,6 +272,7 @@ def eval(device, loader):
 
         if args.mode != "method":  # assumes 3d
             mol_rep = model(batch.x, batch.positions, batch=batch.batch)
+            pred = graph_pred_mlp(mol_rep).squeeze()
         else:
             if args.use_3d_only:
                 mol_rep = model.forward_3d(batch.x, batch.positions, batch.batch)
@@ -548,6 +551,25 @@ if __name__ == "__main__":
         )
 
         writer.writerow(dict_args.values())
+
+    loss_dict = {
+        f"train_mae_{args.task}": train_mae_list[best_val_idx],
+        f"val_mae_{args.task}": val_mae_list[best_val_idx],
+        f"test_mae_{args.task}": test_mae_list[best_val_idx],
+        "task": args.task,
+        "model_name": args.output_model_name,
+    }
+
+    tasks = dataset.target_field
+
+    path = f"results/{args.output_model_name}/{args.dataset}"
+    if not os.path.exists(path):
+        os.makedirs(path)
+
+    torch.save(
+        loss_dict,
+        f"results/{args.output_model_name}/{args.dataset}/{args.task}_results.pt",
+    )
 
     if args.wandb:
         wandb.log(
