@@ -259,7 +259,7 @@ def create_pretrain_heads(task, intermediate_dim, device):
     elif task == "centrality_ranking":
         pred_head = get_pred_head(
             intermediate_dim,
-            2,
+            3,
             is_shallow=use_shallow_predictors,
             normalizer=normalizer,
         )
@@ -364,7 +364,7 @@ def pretrain(
                             bond_angle_indices,
                         )
                     elif task_2d == "dihedral_angle":
-                        loss_2d = dihedral_angle_loss(
+                        loss_2d, _ = dihedral_angle_loss(
                             batch,
                             final_midstream_2d,
                             pretrain_heads_2d[i],
@@ -381,7 +381,7 @@ def pretrain(
                             neg_samples=args.pretrain_neg_link_samples,
                         )
                     elif task_3d == "edge_classification":
-                        loss_3d = edge_classification_loss(
+                        loss_3d, acc = edge_classification_loss(
                             batch, final_midstream_3d, pretrain_heads_3d[i]
                         )
                     elif task_3d == "spd":
@@ -615,6 +615,8 @@ def main():
     elif args.dataset == "PCQM4Mv2-pretraining":
         dataset = PCQM4Mv2(data_root, transform=None)
         # dataset = split_pretraining(base_dataset)
+    elif args.dataset == "PCQM4Mv2-pretraining-betweenness":
+        dataset = PCQM4Mv2(data_root, transform=None)
     elif args.dataset == "PCQM4Mv2-pretraining-centrality":
         dataset = PCQM4Mv2(data_root, transform=None)
         # dataset = split_pretraining(base_dataset)
