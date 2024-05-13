@@ -349,12 +349,20 @@ def pretrain(
                 acc = 0
 
                 for i, (task_2d, task_3d) in enumerate(zip(tasks_2d, tasks_3d)):
+                    midstream_3d = (
+                        final_midstream_3d if args.mix_embs_pretrain else None
+                    )
+                    midstream_2d = (
+                        final_midstream_2d if args.mix_embs_pretrain else None
+                    )
+
                     if task_2d == "interatomic_dist":
                         loss_2d = interatomic_distance_loss(
                             batch,
                             final_midstream_2d,
                             pretrain_heads_2d[i],
                             sample_edges,
+                            embs_3d=midstream_3d,
                         )
                     elif task_2d == "bond_angle":
                         loss_2d = bond_angle_loss(
@@ -362,6 +370,7 @@ def pretrain(
                             final_midstream_2d,
                             pretrain_heads_2d[i],
                             bond_angle_indices,
+                            embs_3d=midstream_3d,
                         )
                     elif task_2d == "dihedral_angle":
                         loss_2d, _ = dihedral_angle_loss(
@@ -369,6 +378,8 @@ def pretrain(
                             final_midstream_2d,
                             pretrain_heads_2d[i],
                             dihedral_angle_indices,
+                            embs_3d=midstream_3d,
+                            rep_type=args.rep_type,
                             symm=args.symm_dihedrals,
                             as_classification=args.classify_dihedrals,
                         )
@@ -382,7 +393,10 @@ def pretrain(
                         )
                     elif task_3d == "edge_classification":
                         loss_3d, acc = edge_classification_loss(
-                            batch, final_midstream_3d, pretrain_heads_3d[i]
+                            batch,
+                            final_midstream_3d,
+                            pretrain_heads_3d[i],
+                            embs_2d=midstream_2d,
                         )
                     elif task_3d == "spd":
                         loss_3d, acc = spd_loss(
@@ -390,6 +404,7 @@ def pretrain(
                             final_midstream_3d,
                             pretrain_heads_3d[i],
                             sample_edges,
+                            embs_2d=midstream_2d,
                         )
                     elif task_3d == "bond_anchor_pred":
                         loss_3d = anchor_pred_loss(
@@ -409,6 +424,7 @@ def pretrain(
                             final_midstream_3d,
                             pretrain_heads_3d[i],
                             sample_edges,
+                            embs_2d=midstream_2d,
                         )
                     elif task_3d == "betweenness_ranking":
                         loss_3d, acc = betweenness_ranking_loss(
@@ -416,6 +432,7 @@ def pretrain(
                             final_midstream_3d,
                             pretrain_heads_3d[i],
                             sample_edges,
+                            embs_2d=midstream_2d,
                         )
 
                     loss = loss + loss_2d + loss_3d
