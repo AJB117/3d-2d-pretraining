@@ -10,6 +10,9 @@ def main(args):
 
     path = os.path.join(args.root_dir, args.dataset)
     for file in os.listdir(path):
+        if file == "results.csv":
+            continue
+
         results = torch.load(os.path.join(path, file))
         task = results["task"]
 
