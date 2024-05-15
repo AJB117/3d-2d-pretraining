@@ -435,7 +435,7 @@ def pretrain(
                             embs_2d=midstream_2d,
                         )
 
-                    loss = loss + loss_2d + loss_3d
+                    loss = loss + balances_2d[i] * loss_2d + balances_3d[i] * loss_3d
                     loss_terms.append(loss)
                     loss_dict[task_2d] += loss_2d.item()
                     loss_dict[task_3d] += loss_3d.item()
