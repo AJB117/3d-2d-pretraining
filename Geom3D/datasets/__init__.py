@@ -7,6 +7,7 @@ from Geom3D.datasets.dataset_utils import (
 from Geom3D.datasets.dataset_PCQM4Mv2 import PCQM4Mv2
 
 from Geom3D.datasets.dataset_QM9 import MoleculeDatasetQM9
+from Geom3D.datasets.dataset_QM8 import MoleculeDatasetQM8
 
 from Geom3D.datasets.dataset_MD17 import DatasetMD17
 
