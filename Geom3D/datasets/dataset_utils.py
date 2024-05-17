@@ -351,6 +351,14 @@ def get_eig_centrality(edge_index, num_nodes):
     )
     return centrality
 
+def get_betweenness_centrality(edge_index, num_nodes):
+    nx_graph = to_networkx(Data(edge_index=edge_index), to_undirected=True)
+    centrality = nx.betweenness_centrality(nx_graph)
+    centrality = torch.tensor(
+        [centrality[i] for i in range(num_nodes)], dtype=torch.float32
+    )
+    return centrality
+
 
 def get_dihedral_angles(mol, bond_angles, edge_set, efficient=False):
     conformer = mol.GetConformers()[0]
@@ -444,6 +452,65 @@ def get_dihedral_angles(mol, bond_angles, edge_set, efficient=False):
 
     return dihedral_angles
 
+def mol_to_graph_data_obj_just_data_3D(
+    mol,
+    pure_atomic_num=False,
+):
+    # atoms
+    atom_features_list = []
+    atom_count = defaultdict(int)
+    for atom in mol.GetAtoms():
+        if not pure_atomic_num:
+            atom_feature = atom_to_feature_vector(atom)
+            atomic_number = atom.GetAtomicNum()
+            assert atomic_number - 1 == atom_feature[0]
+            atom_count[atomic_number] += 1
+        else:
+            atomic_number = atom.GetAtomicNum()
+            atom_feature = atomic_number - 1
+            atom_count[atomic_number] += 1
+        atom_features_list.append(atom_feature)
+    x = torch.tensor(np.array(atom_features_list), dtype=torch.long)
+
+    # every CREST conformer gets its own mol object,
+    # every mol object has only one RDKit conformer
+    # ref: https://github.com/learningmatter-mit/geom/blob/master/tutorials/
+    conformer = mol.GetConformers()[0]
+    positions = conformer.GetPositions()
+    positions = torch.Tensor(positions)
+    spd_mat = torch.zeros((1,), dtype=torch.long)
+    # bonds
+    # num_bond_features = 2  # bond type, bond direction
+    if len(mol.GetBonds()) > 0:  # mol has bonds
+        edges_list = []
+        edge_feats_list = []
+        for bond in mol.GetBonds():
+            i = bond.GetBeginAtomIdx()
+            j = bond.GetEndAtomIdx()
+            edge_feature = bond_to_feature_vector(bond)
+            edges_list.append((i, j))
+            edge_feats_list.append(edge_feature)
+            edges_list.append((j, i))
+            edge_feats_list.append(edge_feature)
+
+        # Graph connectivity in COO format with shape [2, num_edges]
+        edge_index = torch.tensor(np.array(edges_list).T, dtype=torch.long)
+        # Edge feature matrix with shape [num_edges, num_edge_features]
+        edge_attr = torch.tensor(np.array(edge_feats_list), dtype=torch.long)
+
+    else:  # mol has no bonds
+        num_bond_features = 3  # bond type & direction
+        edge_index = torch.empty((2, 0), dtype=torch.long)
+        edge_attr = torch.empty((0, num_bond_features), dtype=torch.long)
+
+    data = Data(
+        x=x,
+        positions=positions,
+        edge_index=edge_index,
+        edge_attr=edge_attr,
+    )
+
+    return data, atom_count
 
 def mol_to_graph_data_obj_simple_3D(
     mol,
@@ -554,6 +621,7 @@ def mol_to_graph_data_obj_simple_3D(
 
         try:
             eig_centrality_vec = get_eig_centrality(edge_index, x.shape[0])
+            betweenness_centrality_vec = get_betweenness_centrality(edge_index, x.shape[0])
         except Exception as e:
             print(e)
             pdb.set_trace()
@@ -576,8 +644,8 @@ def mol_to_graph_data_obj_simple_3D(
     # assert that spd_mat is non-empty
     try:
         assert spd_mat.numel() != 0
-    except:
-        print("Empty spd_mat")
+    except Exception as e:
+        print(e)
         pdb.set_trace()
 
     # pad spd_mat to 50 x 50
@@ -601,6 +669,7 @@ def mol_to_graph_data_obj_simple_3D(
         num_angles=num_angles,
         num_dihedrals=num_dihedrals,
         eig_centrality=eig_centrality_vec,
+        betweenness_centrality=betweenness_centrality_vec
     )
     return data, atom_count, "success"
 
