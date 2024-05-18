@@ -365,6 +365,11 @@ def pretrain(
                 [outs_2d[1], outs_2d[1]],
                 [outs_2d[2], outs_2d[2]],
             ]
+            balances_list_2d = [
+                [balances_2d[0]],
+                [balances_2d[0], balances_2d[1]],
+                [balances_2d[1], balances_2d[2]],
+            ]
 
             tasks_list_3d = [
                 [tasks_3d[0]],
@@ -380,6 +385,11 @@ def pretrain(
                 [outs_3d[0]],
                 [outs_3d[1], outs_3d[1]],
                 [outs_3d[2], outs_3d[2]],
+            ]
+            balances_list_3d = [
+                [balances_3d[0]],
+                [balances_3d[0], balances_3d[1]],
+                [balances_3d[1], balances_3d[2]],
             ]
         elif args.loss_pattern == "A AB ABC":
             tasks_list_2d = [
@@ -397,6 +407,11 @@ def pretrain(
                 [outs_2d[1], outs_2d[1]],
                 [outs_2d[2], outs_2d[2], outs_2d[2]],
             ]
+            balances_list_2d = [
+                [balances_2d[0]],
+                [balances_2d[0], balances_2d[1]],
+                [balances_2d[0], balances_2d[1], balances_2d[2]],
+            ]
 
             pred_heads_3d = [
                 [pretrain_heads_3d[0]],
@@ -413,11 +428,17 @@ def pretrain(
                 [tasks_3d[0], tasks_3d[1]],
                 [tasks_3d[0], tasks_3d[1], tasks_3d[2]],
             ]
+            balances_list_3d = [
+                [balances_3d[0]],
+                [balances_3d[0], balances_3d[1]],
+                [balances_3d[0], balances_3d[1], balances_3d[2]],
+            ]
+
         else:
             raise ValueError("Invalid loss pattern")
 
-        for i, (tasks_2d, pred_heads, midstreams) in enumerate(
-            zip(tasks_list_2d, pred_heads_2d, outs_2d)
+        for i, (tasks_2d, pred_heads, midstreams, balances_2d) in enumerate(
+            zip(tasks_list_2d, pred_heads_2d, outs_2d, balances_list_2d)
         ):
             for j in range(len(tasks_2d)):
                 task_2d = tasks_2d[j]
@@ -466,8 +487,8 @@ def pretrain(
                 if acc is not None:
                     loss_dict[key + "_acc"] += acc
 
-        for i, (tasks_3d, pred_heads, midstreams) in enumerate(
-            zip(tasks_list_3d, pred_heads_3d, outs_3d)
+        for i, (tasks_3d, pred_heads, midstreams, balances_3d) in enumerate(
+            zip(tasks_list_3d, pred_heads_3d, outs_3d, balances_list_3d)
         ):
             for j in range(len(tasks_3d)):
                 task_3d = tasks_3d[j]
