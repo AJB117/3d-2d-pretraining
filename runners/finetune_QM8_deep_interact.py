@@ -199,7 +199,10 @@ def train(epoch, device, loader, optimizer):
             pred = graph_pred_mlp(mol_rep).squeeze()
 
         B = pred.size()[0]
-        y = batch.y.view(B, -1)[:, task_id]
+        if args.task == "all":
+            y = batch.y.view(B, -1)
+        else:
+            y = batch.y.view(B, -1)[:, task_id]
 
         # normalize
         normalized_y = (y - TRAIN_mean) / TRAIN_std
@@ -268,7 +271,11 @@ def eval(device, loader):
             pred = graph_pred_mlp(mol_rep).squeeze()
 
         B = pred.size()[0]
-        y = batch.y.view(B, -1)[:, task_id]
+        if args.task == "all":
+            y = batch.y.view(B, -1)
+        else:
+            y = batch.y.view(B, -1)[:, task_id]
+
         # denormalize
         pred = pred * TRAIN_std + TRAIN_mean
         y = y
@@ -298,7 +305,7 @@ if __name__ == "__main__":
     if args.use_rotation_transform:
         rotation_transform = RandomRotation()
 
-    num_tasks = 1
+    num_tasks = 12 if args.task == "all" else 1
     assert args.dataset == "QM8"
 
     transform = (
@@ -510,14 +517,16 @@ if __name__ == "__main__":
 
     tasks = dataset.target_field
 
-    path = f"results/{args.output_model_name}/{args.dataset}"
+    path = f"./results/{args.output_model_name}/{args.dataset}"
     if not os.path.exists(path):
         os.makedirs(path)
 
+    fname = f"./results/{args.output_model_name}/{args.dataset}/{args.task}_results.pt"
     torch.save(
         loss_dict,
-        f"results/{args.output_model_name}/{args.dataset}/{args.task}_results.pt",
+        fname,
     )
+    print("Saved results to {}".format(fname))
 
     if args.wandb:
         wandb.log(
