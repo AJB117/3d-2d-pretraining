@@ -242,7 +242,8 @@ class Interactor(nn.Module):
         orig_x = x
         x = self.atom_encoder_2d(x)
         if self.args.transfer:
-            x_3d = self.atom_encoder_3d(orig_x[:, 0])
+            with torch.no_grad():
+                x_3d = self.atom_encoder_3d(orig_x[:, 0])
 
         h_list_2d = [x]
         prev = x
