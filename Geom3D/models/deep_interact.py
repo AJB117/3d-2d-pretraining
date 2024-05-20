@@ -200,6 +200,7 @@ class Interactor(nn.Module):
         positions,
         batch,
     ):
+        orig_x = x
         if self.model_3d == "SchNet":
             x_3d = x
             if x.dim() != 1:
@@ -207,6 +208,10 @@ class Interactor(nn.Module):
 
             assert x_3d.dim() == 1 and x_3d.dtype == torch.long
             batch = torch.zeros_like(x) if batch is None else batch
+
+        if self.args.transfer:
+            with torch.no_grad():
+                x_2d = self.atom_encoder_2d(orig_x)
 
         x = self.atom_encoder_3d(x_3d)
         prev = x
@@ -220,6 +225,10 @@ class Interactor(nn.Module):
 
             if self.residual:
                 x = x + prev
+
+            if self.args.transfer:
+                combined_x = self.interactors[i](x, x_2d)
+                x_2d, x = combined_x.split(self.emb_dim, dim=-1)
 
             prev = x
 
