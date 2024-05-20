@@ -271,15 +271,20 @@ class Interactor(nn.Module):
 
         if self.JK == "last":
             return x
-        elif self.JK in ("sum", "mean"):
-            means = [global_mean_pool(h, batch) for h in h_list_2d]
-            outs = torch.stack(means)
-            final = torch.cat([outs, x.unsqueeze(0)], dim=0)
+        # elif self.JK in ("sum", "mean"):
+        elif self.JK == "sum":
+            pooler = global_add_pool
+        elif self.JK == "mean":
+            pooler = global_mean_pool
 
-            if self.JK == "sum":
-                return final.sum(dim=0)
-            elif self.JK == "mean":
-                return final.mean(dim=0)
+        pooled = [pooler(h, batch) for h in h_list_2d]
+        outs = torch.stack(pooled)
+        final = torch.cat([outs, x.unsqueeze(0)], dim=0)
+
+        if self.JK == "sum":
+            return final.sum(dim=0)
+        elif self.JK == "mean":
+            return final.mean(dim=0)
 
         return x
 
