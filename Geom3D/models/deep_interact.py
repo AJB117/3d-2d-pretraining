@@ -103,7 +103,6 @@ class Interactor(nn.Module):
         self.atom_encoder_2d = AtomEncoder(emb_dim=emb_dim)
         self.atom_encoder_3d = None
 
-        # if model_3d == "SchNet":
         self.atom_encoder_3d = nn.Embedding(num_node_class, emb_dim)
         self.atomic_mass = torch.from_numpy(ase.data.atomic_masses).to(device)
 
@@ -312,17 +311,6 @@ class Interactor(nn.Module):
         x_2d = self.atom_encoder_2d(x)
         prev_2d = x_2d
 
-        # find the virtual nodes out of the batch
-        # num_nodes_per_graph = scatter_add(
-        #     torch.ones_like(positions[:, 0]), batch, dim=0
-        # ).type(torch.long)
-        # cum_indices_per_graph = torch.cumsum(num_nodes_per_graph, dim=0).type(
-        #     torch.long
-        # )
-
-        # virt_mask = torch.zeros_like(positions[:, 0], dtype=torch.bool)
-        # virt_mask[cum_indices_per_graph - 1] = True
-
         if self.model_3d == "SchNet":
             x_3d = x
             if x.dim() != 1:
@@ -341,7 +329,6 @@ class Interactor(nn.Module):
             x_2d = self.blocks_2d[i](x_2d, edge_index, edge_attr)
             x_2d = self.dropouts[i](x_2d)
             x_2d = self.norm_2d[i](x_2d)
-            # x_2d = F.relu(x_2d)
 
             if self.residual:
                 x_2d = x_2d + prev_2d
@@ -351,28 +338,12 @@ class Interactor(nn.Module):
             x_3d = self.dropouts[i](x_3d)
             x_3d = self.norm_3d[i](x_3d)
 
-            # x_3d = F.relu(x_3d)
-
             if self.residual:
                 x_3d = x_3d + prev_3d
-
-            # virt_emb_2d = x_2d[virt_mask]
-            # virt_emb_3d = x_3d[virt_mask]
-
-            # if self.interaction_agg == "cat":
-            #     interaction = torch.cat([virt_emb_2d, virt_emb_3d], dim=-1)
-            # elif self.interaction_agg == "sum":
-            #     interaction = virt_emb_2d + virt_emb_3d
-            # elif self.interaction_agg == "mean":
-            #     interaction = (virt_emb_2d + virt_emb_3d) / 2
-
-            # mean_2d = global_mean_pool(x_2d, batch)
-            # mean_3d = global_mean_pool(x_3d, batch)
 
             prev_2d = x_2d
             prev_3d = x_3d
 
-            # interaction = torch.cat([x_2d, x_3d], dim=-1)
             if (
                 self.interactor_residual
                 and interactor_residual_2d is not None
@@ -389,7 +360,6 @@ class Interactor(nn.Module):
             else:
                 interaction = self.interactor(x_2d_int, x_3d_int)
 
-            # virt_emb_2d, virt_emb_3d = torch.split(interaction, self.emb_dim, dim=-1)
             x_2d, x_3d = torch.split(interaction, self.emb_dim, dim=-1)
 
             if self.interactor_residual:
@@ -402,26 +372,14 @@ class Interactor(nn.Module):
             midstream_outs_2d.append(x_2d)
             midstream_outs_3d.append(x_3d)
 
-            # x_2d[virt_mask] = virt_emb_2d
-            # x_3d[virt_mask] = virt_emb_3d
-
-        if self.interaction_rep_2d == "vnode":
-            rep_2d = x_2d[virt_mask]
-        elif self.interaction_rep_2d == "mean":
-            # rep_2d = x_2d.mean(dim=0)
+        if self.interaction_rep_2d == "mean":
             rep_2d = global_mean_pool(x_2d, batch)
         elif self.interaction_rep_2d == "sum":
-            # rep_2d = x_2d.sum(dim=0)
             rep_2d = global_add_pool(x_2d, batch)
 
-        if self.interaction_rep_3d in ("com", "const_radius"):
-            rep_3d = x_3d[virt_mask]
-        elif self.interaction_rep_3d == "mean":
-            # rep_3d = x_3d[~virt_mask].mean(dim=0, keepdim=True)
-            # rep_3d = x_3d.mean(dim=0)
+        if self.interaction_rep_3d == "mean":
             rep_3d = global_mean_pool(x_3d, batch)
         elif self.interaction_rep_3d == "sum":
-            # rep_3d = x_3d.sum(dim=0)
             rep_3d = global_add_pool(x_3d, batch)
 
         if self.final_pool == "attention":
