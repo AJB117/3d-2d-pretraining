@@ -12,57 +12,7 @@ from .molecule_gnn_model import (
 )
 from .schnet import InteractionBlock, GaussianSmearing, ShiftedSoftplus
 from runners.util import apply_init
-
-activation_dict = {"ReLU": nn.ReLU, "GELU": nn.GELU, "SiLU": nn.SiLU, "Swish": nn.SiLU}
-
-
-class InteractionMLP(nn.Module):
-    def __init__(
-        self,
-        emb_dim,
-        dropout=0.0,
-        num_layers=2,
-        interaction_agg="cat",
-        normalizer=nn.Identity,
-        initializer="glorot",
-        activation="GELU",
-    ):
-        super(InteractionMLP, self).__init__()
-        self.emb_dim = emb_dim
-        self.dropout = dropout
-        self.num_layers = num_layers
-        self.interaction_agg = interaction_agg
-
-        act = activation_dict[activation]
-
-        layers = []
-        emb_dim = emb_dim * 2 if interaction_agg == "cat" else emb_dim
-        for _ in range(num_layers):
-            layers.append(nn.Linear(emb_dim, emb_dim))
-            layers.append(nn.Dropout(dropout))
-            layers.append(normalizer(emb_dim))
-            layers.append(act())
-
-        self.layers = nn.Sequential(*layers)
-        self.initializer = initializer
-
-    def reset_parameters(self):
-        for layer in self.layers:
-            if isinstance(layer, nn.Linear):
-                apply_init(self.initializer)(layer.weight)
-                nn.init.zeros_(layer.bias)
-
-    def forward(self, rep_2d, rep_3d):
-        if self.interaction_agg == "cat":
-            x = torch.cat([rep_2d, rep_3d], dim=-1)
-        elif self.interaction_agg == "sum":
-            x = rep_2d + rep_3d
-        elif self.interaction_agg == "mean":
-            x = (rep_2d + rep_3d) / 2
-        else:
-            raise ValueError("Invalid interaction aggregation method")
-
-        return self.layers(x)
+from interactors import InteractionMLP, InteractionMHA
 
 
 class Interactor(nn.Module):
@@ -75,6 +25,7 @@ class Interactor(nn.Module):
         model_2d="GIN",
         model_3d="SchNet",
         residual=True,
+        interactor_type="mlp",
         interaction_agg="cat",
         interaction_rep_2d="vnode",
         interaction_rep_3d="com",
@@ -88,6 +39,7 @@ class Interactor(nn.Module):
         self.args = args
         self.num_interaction_blocks = num_interaction_blocks
         self.residual = residual
+        self.interactor_type = interactor_type
         self.interactor_residual = args.interactor_residual
         self.interaction_agg = interaction_agg
         self.interaction_rep_2d = interaction_rep_2d
