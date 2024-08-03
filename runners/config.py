@@ -209,7 +209,15 @@ parser.add_argument(
     default="cat",
     help="how to aggregate the interactions",
 )
-parser.add_argument("--interactor_type", type=str, default="mlp", help="type of interactor")
+parser.add_argument(
+    "--interactor_type", type=str, default="mlp", help="type of interactor"
+)
+parser.add_argument(
+    "--interactor_heads",
+    type=int,
+    default=4,
+    help="number of heads for attention-based interaction",
+)
 parser.add_argument(
     "--num_interaction_blocks", type=int, default=6, help="number of interaction blocks"
 )
