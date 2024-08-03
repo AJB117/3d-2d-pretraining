@@ -1,5 +1,4 @@
 import matplotlib.pyplot as plt
-from torchviz import make_dot
 import wandb
 import sys
 import uuid
@@ -12,18 +11,14 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import subprocess
-import warnings
-
-from Geom3D.models.encoders import AtomEncoder
 from tqdm import tqdm
 from torch_geometric.loader import DataLoader
 
-from torch_geometric.nn import global_mean_pool
-from Geom3D.datasets import Molecule3DDataset, MoleculeDatasetQM9, PCQM4Mv2
+from Geom3D.datasets import MoleculeDatasetQM9, PCQM4Mv2
 from Geom3D.models import Interactor
 from config import args
 from ogb.utils.features import get_atom_feature_dims
-from util import VirtualNodeMol, NTXentLoss
+from util import VirtualNodeMol
 from collections import defaultdict
 from deep_interact_losses import (
     edge_classification_loss,
@@ -307,13 +302,16 @@ def pretrain(
     for step, batch in enumerate(l):
         batch = batch.to(device)
 
+        # final_embs, midstream_2d_outs, midstream_3d_outs = model(
+        #     batch.x,
+        #     batch.edge_index,
+        #     batch.edge_attr,
+        #     batch.positions,
+        #     batch.batch,
+        #     require_midstream=True,
+        # )
         final_embs, midstream_2d_outs, midstream_3d_outs = model(
-            batch.x,
-            batch.edge_index,
-            batch.edge_attr,
-            batch.positions,
-            batch.batch,
-            require_midstream=True,
+            batch, require_midstream=True
         )
 
         pretrain_2d_task_indices = args.pretrain_2d_task_indices
@@ -716,7 +714,7 @@ def main():
 
     epoch_start = 1
 
-    if args.input_model_file != "":
+    if os.path.exists(args.input_model_file):
         saver_dict = torch.load(args.input_model_file)
         model.load_state_dict(saver_dict["model"])
         graph_pred_mlp.load_state_dict(saver_dict["graph_pred_mlp"])
@@ -731,6 +729,8 @@ def main():
         epoch_start = saver_dict["epoch"]
 
         print("successfully loaded model checkpoint to resume pretraining with")
+    else:
+        print("no model checkpoint found, pretraining from scratch")
 
     model_param_group = []
 

@@ -255,6 +255,11 @@ def interatomic_distance_loss(batch, embs_2d, pred_head, sample_edges, embs_3d=N
 
     loss = mse_loss(pred_distances, true_distances)
 
+    # draw a histogram of the predicted versus true distances
+    plt.hist(pred_distances.detach().cpu().numpy(), bins=50, color="red", alpha=0.5)
+    plt.hist(true_distances.detach().cpu().numpy(), bins=50, color="blue", alpha=0.5)
+    plt.savefig("distances.png")
+
     return loss
 
 
@@ -303,6 +308,10 @@ def bond_angle_loss(batch, embs_2d, pred_head, indices, embs_3d=None, rep_type="
 
     pred_angles = pred_head(angle_emb).squeeze()
     loss = mse_loss(pred_angles, true_angles)
+
+    plt.hist(pred_angles.detach().cpu().numpy(), bins=50, color="red", alpha=0.5)
+    plt.hist(true_angles.detach().cpu().numpy(), bins=50, color="blue", alpha=0.5)
+    plt.savefig("angles.png")
 
     return loss
 
@@ -413,6 +422,10 @@ def dihedral_angle_loss(
         plt.hist(pred_angles.detach().cpu().numpy(), bins=50, color="red", alpha=0.5)
         plt.hist(true_angles.detach().cpu().numpy(), bins=50, color="blue", alpha=0.5)
         plt.show()
+
+    # plt.hist(pred_angles.detach().cpu().numpy(), bins=50, color="red", alpha=0.5)
+    # plt.hist(true_angles.detach().cpu().numpy(), bins=50, color="blue", alpha=0.5)
+    # plt.savefig("dihedrals.png")
 
     return loss, acc
 

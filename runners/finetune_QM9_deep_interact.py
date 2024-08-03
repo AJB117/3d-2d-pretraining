@@ -130,6 +130,7 @@ def model_setup():
         emb_dim=args.emb_dim,
         device=device,
         num_node_class=119 + 1,  # + 1 for virtual node
+        interactor_type=args.interactor_type,
         interaction_rep_2d=args.interaction_rep_2d,
         interaction_rep_3d=args.interaction_rep_3d,
         residual=args.residual,
@@ -208,13 +209,7 @@ def train(epoch, device, loader, optimizer):
                     batch.x, batch.edge_index, batch.edge_attr, batch.batch
                 )
             else:
-                mol_rep = model(
-                    batch.x,
-                    batch.edge_index,
-                    batch.edge_attr,
-                    batch.positions,
-                    batch.batch,
-                )
+                mol_rep = model(batch)
 
             pred = graph_pred_mlp(mol_rep).squeeze()
 
@@ -281,13 +276,7 @@ def eval(device, loader):
                     batch.x, batch.edge_index, batch.edge_attr, batch.batch
                 )
             else:
-                mol_rep = model(
-                    batch.x,
-                    batch.edge_index,
-                    batch.edge_attr,
-                    batch.positions,
-                    batch.batch,
-                )
+                mol_rep = model(batch)
 
             pred = graph_pred_mlp(mol_rep).squeeze()
 
