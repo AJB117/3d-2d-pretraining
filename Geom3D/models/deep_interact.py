@@ -11,8 +11,9 @@ from .molecule_gnn_model import (
     TransformerConv,
 )
 from .schnet import InteractionBlock, GaussianSmearing, ShiftedSoftplus
-from runners.util import apply_init
-from interactors import InteractionMLP, InteractionMHA
+from runners.util import apply_init, activation_dict
+from .interactors import InteractionMLP, InteractionMHA
+from .transformer import TransformerLayer
 
 
 class Interactor(nn.Module):
@@ -100,7 +101,8 @@ class Interactor(nn.Module):
 
         self.diff_interactor_per_block = args.diff_interactor_per_block
 
-        if self.diff_interactor_per_block:
+        # if self.diff_interactor_per_block:
+        if self.interactor_type == "mlp":
             self.interactors = nn.ModuleList(
                 [
                     InteractionMLP(
@@ -115,18 +117,21 @@ class Interactor(nn.Module):
                     for _ in range(num_interaction_blocks)
                 ]
             )
-        else:
-            interactor = InteractionMLP(
-                emb_dim,
-                dropout=dropout,
-                num_layers=2,
-                interaction_agg=interaction_agg,
-                normalizer=normalizer,
-                initializer=args.initialization,
-                activation=args.interactor_activation,
+        elif self.interactor_type == "mha":
+            self.interactors = nn.ModuleList(
+                [
+                    InteractionMHA(
+                        emb_dim,
+                        num_heads=args.interactor_heads,
+                        dropout=dropout,
+                        interaction_agg=interaction_agg,
+                        normalizer=normalizer,
+                        initializer=args.initialization,
+                        activation=args.interactor_activation,
+                    ).to(device)
+                    for _ in range(num_interaction_blocks)
+                ]
             )
-
-            self.interactor = interactor
 
         self.reset_parameters()
 
@@ -251,17 +256,11 @@ class Interactor(nn.Module):
 
     def forward(
         self,
-        x,
-        edge_index,
-        edge_attr,
-        positions,
         batch,
         require_midstream=False,
     ):
+        x = batch.x
         midstream_outs_2d, midstream_outs_3d = [], []
-
-        x_2d = self.atom_encoder_2d(x)
-        prev_2d = x_2d
 
         if self.model_3d == "SchNet":
             x_3d = x
@@ -277,8 +276,18 @@ class Interactor(nn.Module):
 
         interactor_residual_3d, interactor_residual_2d = None, None
 
+        # if self.model_2d == "Transformer":
+        x_2d = self.atom_encoder_2d(x)
+
+        edge_attr = batch.edge_attr
+        edge_index = batch.edge_index
+        prev_2d = x_2d
+
         for i in range(self.num_interaction_blocks):
-            x_2d = self.blocks_2d[i](x_2d, edge_index, edge_attr)
+            x_2d = self.blocks_2d[i](x_2d, edge_attr=edge_attr, edge_index=edge_index)
+            # else:
+            #   x_2d = self.blocks_2d[i](x_2d, batch.edge_index, batch.edge_attr)
+
             x_2d = self.dropouts[i](x_2d)
             x_2d = self.norm_2d[i](x_2d)
 
@@ -286,7 +295,8 @@ class Interactor(nn.Module):
                 x_2d = x_2d + prev_2d
 
             if self.model_3d == "SchNet":
-                x_3d = self.blocks_3d[i](x_3d, positions, batch)
+                x_3d = self.blocks_3d[i](x_3d, batch.positions, batch.batch)
+
             x_3d = self.dropouts[i](x_3d)
             x_3d = self.norm_3d[i](x_3d)
 
@@ -307,12 +317,16 @@ class Interactor(nn.Module):
                 x_2d_int = x_2d
                 x_3d_int = x_3d
 
-            if self.diff_interactor_per_block:
+            # if self.diff_interactor_per_block:
+            if self.interactor_type == "mlp":
                 interaction = self.interactors[i](x_2d_int, x_3d_int)
-            else:
-                interaction = self.interactor(x_2d_int, x_3d_int)
-
-            x_2d, x_3d = torch.split(interaction, self.emb_dim, dim=-1)
+                x_2d, x_3d = torch.split(interaction, self.emb_dim, dim=-1)
+            elif self.interactor_type == "mha":
+                x_2d, x_3d = self.interactors[i](
+                    x_2d_int, x_3d_int, batch.batch.bincount()
+                )
+            # else:
+            #     interaction = self.interactor(x_2d_int, x_3d_int)
 
             if self.interactor_residual:
                 interactor_residual_2d = x_2d
@@ -325,14 +339,14 @@ class Interactor(nn.Module):
             midstream_outs_3d.append(x_3d)
 
         if self.interaction_rep_2d == "mean":
-            rep_2d = global_mean_pool(x_2d, batch)
+            rep_2d = global_mean_pool(x_2d, batch.batch)
         elif self.interaction_rep_2d == "sum":
-            rep_2d = global_add_pool(x_2d, batch)
+            rep_2d = global_add_pool(x_2d, batch.batch)
 
         if self.interaction_rep_3d == "mean":
-            rep_3d = global_mean_pool(x_3d, batch)
+            rep_3d = global_mean_pool(x_3d, batch.batch)
         elif self.interaction_rep_3d == "sum":
-            rep_3d = global_add_pool(x_3d, batch)
+            rep_3d = global_add_pool(x_3d, batch.batch)
 
         if self.final_pool == "attention":
             pass  #! TODO
@@ -352,11 +366,11 @@ class Interactor(nn.Module):
             return x
         elif self.JK in ("sum", "mean"):
             means_2d = [
-                global_mean_pool(midstream_2d, batch)
+                global_mean_pool(midstream_2d, batch.batch)
                 for midstream_2d in midstream_outs_2d
             ]
             means_3d = [
-                global_mean_pool(midstream_3d, batch)
+                global_mean_pool(midstream_3d, batch.batch)
                 for midstream_3d in midstream_outs_3d
             ]
 
@@ -390,10 +404,24 @@ class Block2D(nn.Module):
         elif gnn_type == "GraphSAGE":
             layer = GraphSAGEConv(self.emb_dim, self.emb_dim)
         elif gnn_type == "Transformer":
-            layer = TransformerConv(self.emb_dim, heads=args.transformer_heads)
+            # layer = TransformerConv(self.emb_dim, heads=args.transformer_heads)
+            layer = TransformerLayer(
+                self.emb_dim,
+                ff_hidden_dim=self.emb_dim,
+                num_heads=args.transformer_heads,
+                normalizer=nn.Identity(),
+                activation="GELU",
+                initializer=args.initialization,
+                dropout=0.0,
+            )
         elif gnn_type == "GPS":
             layer = GPSConv(
-                self.emb_dim, GINBlock(self.emb_dim, initializer=initializer), heads=2
+                self.emb_dim,
+                act=activation_dict[args.interactor_activation](),
+                norm=nn.BatchNorm1d(self.emb_dim),
+                conv=GINBlock(self.emb_dim, initializer=initializer),
+                heads=2,
+                dropout=0.25,
             )
         else:
             raise ValueError("Invalid GNN type")
@@ -404,7 +432,7 @@ class Block2D(nn.Module):
         self.layer.reset_parameters()
 
     def forward(self, x, edge_index, edge_attr):
-        x = self.layer(x, edge_index, edge_attr=edge_attr)
+        x = self.layer(x, edge_index=edge_index, edge_attr=edge_attr)
         return x
 
 
@@ -429,7 +457,7 @@ class SchNetBlock(nn.Module):
     def reset_parameters(self):
         self.interaction.reset_parameters()
 
-    def forward(self, h, pos, batch=None):
+    def forward(self, h, pos, batch):
         edge_index = radius_graph(pos, r=self.cutoff, batch=batch)
         row, col = edge_index
         edge_weight = (pos[row] - pos[col]).norm(dim=-1)

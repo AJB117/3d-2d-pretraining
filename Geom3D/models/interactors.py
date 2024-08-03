@@ -1,10 +1,13 @@
+import pdb
 import torch
 import torch.nn as nn
 from .self_attention import SelfAttentionBlock
+from torchdrug.layers.functional.functional import (
+    padded_to_variadic,
+    variadic_to_padded,
+)
 
-from runners.util import apply_init
-
-activation_dict = {"ReLU": nn.ReLU, "GELU": nn.GELU, "SiLU": nn.SiLU, "Swish": nn.SiLU}
+from runners.util import apply_init, activation_dict
 
 
 class InteractionMHA(nn.Module):
@@ -28,45 +31,51 @@ class InteractionMHA(nn.Module):
 
         self.initializer = initializer
 
-        layers = []
-        emb_dim = emb_dim * 2 if interaction_agg == "cat" else emb_dim
-        for _ in range(2):
-            layers.append(SelfAttentionBlock(emb_dim, num_heads, dropout))
-            layers.append(nn.Linear(emb_dim, emb_dim))
-            layers.append(normalizer(emb_dim))
-            layers.append(act())
+        layers_2d_3d = []
+        layers_3d_2d = []
 
-        self.layers = nn.Sequential(*layers)
+        self.mha_2d_3d = SelfAttentionBlock(emb_dim, 1, dropout=0.2)
+        self.mha_3d_2d = SelfAttentionBlock(emb_dim, 1, dropout=0.2)
+
+        for _ in range(1):
+            layers_2d_3d.append(nn.Linear(emb_dim, emb_dim))
+            layers_3d_2d.append(nn.Linear(emb_dim, emb_dim))
+
+            layers_2d_3d.append(normalizer(emb_dim))
+            layers_3d_2d.append(normalizer(emb_dim))
+
+            layers_2d_3d.append(act())
+            layers_3d_2d.append(act())
+
+        self.layers_2d_3d = nn.Sequential(*layers_2d_3d)
+        self.layers_3d_2d = nn.Sequential(*layers_3d_2d)
 
     def reset_parameters(self):
-        for layer in self.mha.children():
+        for layer in self.layers_2d_3d:
             if isinstance(layer, nn.Linear):
                 apply_init(self.initializer)(layer.weight)
                 nn.init.zeros_(layer.bias)
 
-    def forward(self, rep_2d, rep_3d):
-        if self.interaction_agg == "cat":
-            x = torch.cat([rep_2d, rep_3d], dim=-1)
-        elif self.interaction_agg == "sum":
-            x = rep_2d + rep_3d
-        elif self.interaction_agg == "mean":
-            x = (rep_2d + rep_3d) / 2
-        else:
-            raise ValueError("Invalid interaction aggregation method")
+        for layer in [self.mha_2d_3d, self.mha_3d_2d]:
+            apply_init(self.initializer)(layer.query.weight)
+            nn.init.zeros_(layer.query.bias)
+            apply_init(self.initializer)(layer.key.weight)
+            nn.init.zeros_(layer.key.bias)
+            apply_init(self.initializer)(layer.value.weight)
+            nn.init.zeros_(layer.value.bias)
 
-        # make mask where 2d can only attend to 3d and vice versa
-        # 2d -> 3d
-        mask = torch.zeros(x.size(0), x.size(0)).to(x.device)
-        mask[: rep_2d.size(0), rep_2d.size(0) :] = float("-inf")
-        mask = mask.unsqueeze(0).expand(x.size(0), -1, -1)
+    def forward(self, rep_2d, rep_3d, num_atoms):
+        rep_2d, mask_2d = variadic_to_padded(rep_2d, num_atoms)
+        rep_3d, _ = variadic_to_padded(rep_3d, num_atoms)
 
-        # 3d -> 2d
-        mask = torch.zeros(x.size(0), x.size(0)).to(x.device)
-        mask[rep_2d.size(0) :, : rep_2d.size(0)] = float("-inf")
-        mask = mask.unsqueeze(0).expand(x.size(0), -1, -1)
+        x_2d = self.mha_2d_3d(rep_2d, rep_3d, mask_2d)
+        x_2d = padded_to_variadic(x_2d, num_atoms)
 
-        x = self.mha(x, x, mask)
-        return x
+        x_3d = self.mha_3d_2d(rep_3d, rep_2d, mask_2d)
+        x_3d = padded_to_variadic(x_3d, num_atoms)
+
+        return self.layers_2d_3d(x_2d), self.layers_3d_2d(x_3d)
+        return x_2d, x_3d
 
 
 class InteractionMLP(nn.Module):
