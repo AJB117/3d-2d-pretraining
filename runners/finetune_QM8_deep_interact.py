@@ -19,7 +19,7 @@ from tqdm import tqdm
 from config import args
 from Geom3D.models import GNN, GraphPredLinear, SchNet, EGNN, GNN_NoAtom, Interactor
 from Geom3D.datasets import MoleculeDatasetQM8
-from splitters import random_split
+from splitters import random_split, scaffold_split
 from util import VirtualNodeMol, apply_init
 
 warnings.filterwarnings("ignore")
@@ -56,6 +56,19 @@ class RandomRotation(object):
 def split(dataset, data_root):
     train_dataset, valid_dataset, test_dataset = random_split(dataset)
     print(len(train_dataset), "\t", len(valid_dataset), "\t", len(test_dataset))
+    return train_dataset, valid_dataset, test_dataset
+
+
+def split_scaffold(dataset, smiles_list, data_root):
+    train_dataset, valid_dataset, test_dataset = scaffold_split(
+        dataset,
+        smiles_list,
+        null_value=0,
+        frac_train=0.8,
+        frac_valid=0.1,
+        frac_test=0.1,
+    )
+    print("split via scaffold")
     return train_dataset, valid_dataset, test_dataset
 
 
@@ -111,6 +124,7 @@ def model_setup():
         emb_dim=args.emb_dim,
         device=device,
         num_node_class=119 + 1,  # + 1 for virtual node
+        interactor_type=args.interactor_type,
         interaction_rep_2d=args.interaction_rep_2d,
         interaction_rep_3d=args.interaction_rep_3d,
         residual=args.residual,
@@ -199,10 +213,7 @@ def train(epoch, device, loader, optimizer):
             pred = graph_pred_mlp(mol_rep).squeeze()
 
         B = pred.size()[0]
-        if args.task == "all":
-            y = batch.y.view(B, -1)
-        else:
-            y = batch.y.view(B, -1)[:, task_id]
+        y = batch.y.view(B, -1)[:, task_id]
 
         # normalize
         normalized_y = (y - TRAIN_mean) / TRAIN_std
@@ -271,10 +282,7 @@ def eval(device, loader):
             pred = graph_pred_mlp(mol_rep).squeeze()
 
         B = pred.size()[0]
-        if args.task == "all":
-            y = batch.y.view(B, -1)
-        else:
-            y = batch.y.view(B, -1)[:, task_id]
+        y = batch.y.view(B, -1)[:, task_id]
 
         # denormalize
         pred = pred * TRAIN_std + TRAIN_mean
@@ -322,16 +330,23 @@ if __name__ == "__main__":
     )
     task_id = dataset.task_id
 
-    train_dataset, valid_dataset, test_dataset = split(dataset, data_root)
+    smiles_file = f"{data_root}/processed/smiles.csv"
+    smiles_list = pd.read_csv(smiles_file, header=None)[0].tolist()
+    train_dataset, valid_dataset, test_dataset = split_scaffold(
+        dataset, smiles_list, data_root
+    )
 
     try:
         TRAIN_mean, TRAIN_std = torch.load(f"{args.dataset}_mean_std_{args.task}.pt")
     except FileNotFoundError:
         TRAIN_mean, TRAIN_std = (
-            train_dataset.mean()[task_id].item(),
-            train_dataset.std()[task_id].item(),
+            train_dataset.mean()[task_id],
+            train_dataset.std()[task_id],
         )
         torch.save((TRAIN_mean, TRAIN_std), f"{args.dataset}_mean_std_{args.task}.pt")
+
+    if isinstance(TRAIN_mean, torch.Tensor) and isinstance(TRAIN_std, torch.Tensor):
+        TRAIN_mean, TRAIN_std = TRAIN_mean.to(device), TRAIN_std.to(device)
 
     print("Train mean: {}\tTrain std: {}".format(TRAIN_mean, TRAIN_std))
 
