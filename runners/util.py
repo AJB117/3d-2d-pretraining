@@ -30,7 +30,7 @@ def apply_init(initializer: str = "glorot_uniform"):
     elif initializer == "he_uniform":
         return nn.init.kaiming_uniform_
     elif initializer == "he_normal":
-        return nn.init.kaiming_normal_ 
+        return nn.init.kaiming_normal_
     elif initializer == "orthogonal":
         return nn.init.orthogonal_
     else:
@@ -416,3 +416,6 @@ class VirtualNodeMol(BaseTransform):
         data.x[-1] = torch.tensor([d - 1 for d in atom_feats])
 
         return data
+
+
+activation_dict = {"ReLU": nn.ReLU, "GELU": nn.GELU, "SiLU": nn.SiLU, "Swish": nn.SiLU}
