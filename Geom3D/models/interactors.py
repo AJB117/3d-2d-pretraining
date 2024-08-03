@@ -2,12 +2,13 @@ import pdb
 import torch
 import torch.nn as nn
 from .self_attention import SelfAttentionBlock
-from torchdrug.layers.functional.functional import (
-    padded_to_variadic,
-    variadic_to_padded,
-)
 
-from runners.util import apply_init, activation_dict
+from runners.util import (
+    apply_init,
+    activation_dict,
+    variadic_to_padded,
+    padded_to_variadic,
+)
 
 
 class InteractionMHA(nn.Module):

@@ -15,7 +15,7 @@ import copy
 from torch import Tensor
 
 import ase
-from torch_scatter import scatter
+import torch_scatter
 from torch_geometric.data import Data
 from torch_geometric.data.datapipes import functional_transform
 from torch_geometric.transforms import BaseTransform
@@ -419,3 +419,72 @@ class VirtualNodeMol(BaseTransform):
 
 
 activation_dict = {"ReLU": nn.ReLU, "GELU": nn.GELU, "SiLU": nn.SiLU, "Swish": nn.SiLU}
+
+"""
+TorchDrug functions for variadic inputs, credit to https://torchdrug.ai/
+"""
+
+
+def multi_slice_mask(starts, ends, length):
+    """
+    Compute the union of multiple slices into a binary mask.
+
+    Example::
+
+        >>> mask = multi_slice_mask(torch.tensor([0, 1, 4]), torch.tensor([2, 3, 6]), 6)
+        >>> assert (mask == torch.tensor([1, 1, 1, 0, 1, 1])).all()
+
+    Parameters:
+        starts (LongTensor): start indexes of slices
+        ends (LongTensor): end indexes of slices
+        length (int): length of mask
+    """
+    values = torch.cat([torch.ones_like(starts), -torch.ones_like(ends)])
+    slices = torch.cat([starts, ends])
+    if slices.numel():
+        assert slices.min() >= 0 and slices.max() <= length
+    mask = torch_scatter.scatter_add(values, slices, dim=0, dim_size=length + 1)[:-1]
+    mask = mask.cumsum(0).bool()
+    return mask
+
+
+def variadic_to_padded(input: torch.Tensor, size: torch.LongTensor, value=0):
+    """
+    Convert a variadic tensor to a padded tensor.
+
+    Suppose there are :math:`N` sets, and the sizes of all sets are summed to :math:`B`.
+
+    Parameters:
+        input (Tensor): input of shape :math:`(B, ...)`
+        size (LongTensor): size of sets of shape :math:`(N,)`
+        value (scalar): fill value for padding
+
+    Returns:
+        (Tensor, BoolTensor): padded tensor and mask
+    """
+    num_sample = len(size)
+    max_size = size.max()
+    starts = torch.arange(num_sample, device=size.device) * max_size
+    ends = starts + size
+    mask = multi_slice_mask(starts, ends, num_sample * max_size)
+    mask = mask.view(num_sample, max_size)
+    shape = (num_sample, max_size) + input.shape[1:]
+    padded = torch.full(shape, value, dtype=input.dtype, device=size.device)
+    padded[mask] = input
+    return padded, mask
+
+
+def padded_to_variadic(padded: torch.Tensor, size: torch.LongTensor):
+    """
+    Convert a padded tensor to a variadic tensor.
+
+    Parameters:
+        padded (Tensor): padded tensor of shape :math:`(N, ...)`
+        size (LongTensor): size of sets of shape :math:`(N,)`
+    """
+    num_sample, max_size = padded.shape[:2]
+    starts = torch.arange(num_sample, device=size.device) * max_size
+    ends = starts + size
+    mask = multi_slice_mask(starts, ends, num_sample * max_size)
+    mask = mask.view(num_sample, max_size)
+    return padded[mask]
