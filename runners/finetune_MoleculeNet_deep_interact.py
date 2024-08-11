@@ -131,7 +131,10 @@ def load_model(model, model_weight_file):
     print("Loading from {}".format(model_weight_file))
     model_weights = torch.load(model_weight_file)
     if args.mode == "method":  # as opposed to baseline
-        model.load_state_dict(model_weights["model"])
+        try:
+            model.load_state_dict(model_weights["model"])
+        except RuntimeError:
+            print("Loading model weights failed, training from scratch")
     return
 
 
