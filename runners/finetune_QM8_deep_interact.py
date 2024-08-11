@@ -146,7 +146,10 @@ def load_model(model, model_weight_file, model_3d=None, model_2d=None):
     print("Loading from {}".format(model_weight_file))
     model_weights = torch.load(model_weight_file, map_location=device)
     if args.mode == "method":  # as opposed to baseline
-        model.load_state_dict(model_weights["model"])
+        try:
+            model.load_state_dict(model_weights["model"])
+        except RuntimeError:
+            print("Failed to load model weights, training from scratch")
     return
 
 
@@ -202,13 +205,7 @@ def train(epoch, device, loader, optimizer):
                     batch.x, batch.edge_index, batch.edge_attr, batch.batch
                 )
             else:
-                mol_rep = model(
-                    batch.x,
-                    batch.edge_index,
-                    batch.edge_attr,
-                    batch.positions,
-                    batch.batch,
-                )
+                mol_rep = model(batch)
 
             pred = graph_pred_mlp(mol_rep).squeeze()
 
@@ -271,13 +268,7 @@ def eval(device, loader):
                     batch.x, batch.edge_index, batch.edge_attr, batch.batch
                 )
             else:
-                mol_rep = model(
-                    batch.x,
-                    batch.edge_index,
-                    batch.edge_attr,
-                    batch.positions,
-                    batch.batch,
-                )
+                mol_rep = model(batch)
 
             pred = graph_pred_mlp(mol_rep).squeeze()
 
