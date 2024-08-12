@@ -223,6 +223,15 @@ def train(epoch, device, loader, optimizer):
 
         optimizer.zero_grad()
         loss.backward()
+        # norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        # if step % 20 == 0:
+        #     # print(f"Gradient norm: {norm}\r")
+        #     weights_0, weights_7 = (
+        #         model.interactors[0].processing_layers[1].weight,
+        #         model.interactors[5].processing_layers[1].weight,
+        #     )
+        #     print(f"Layer 0 weights: {weights_0}\nLayer 7 weights: {weights_7}")
+        # torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
         loss_acc += loss.cpu().detach().item()
 

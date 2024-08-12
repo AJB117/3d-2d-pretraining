@@ -351,6 +351,7 @@ def get_eig_centrality(edge_index, num_nodes):
     )
     return centrality
 
+
 def get_betweenness_centrality(edge_index, num_nodes):
     nx_graph = to_networkx(Data(edge_index=edge_index), to_undirected=True)
     centrality = nx.betweenness_centrality(nx_graph)
@@ -452,6 +453,7 @@ def get_dihedral_angles(mol, bond_angles, edge_set, efficient=False):
 
     return dihedral_angles
 
+
 def mol_to_graph_data_obj_just_data_3D(
     mol,
     pure_atomic_num=False,
@@ -511,6 +513,7 @@ def mol_to_graph_data_obj_just_data_3D(
     )
 
     return data, atom_count
+
 
 def mol_to_graph_data_obj_simple_3D(
     mol,
@@ -621,7 +624,9 @@ def mol_to_graph_data_obj_simple_3D(
 
         try:
             eig_centrality_vec = get_eig_centrality(edge_index, x.shape[0])
-            betweenness_centrality_vec = get_betweenness_centrality(edge_index, x.shape[0])
+            betweenness_centrality_vec = get_betweenness_centrality(
+                edge_index, x.shape[0]
+            )
         except Exception as e:
             print(e)
             pdb.set_trace()
@@ -669,7 +674,7 @@ def mol_to_graph_data_obj_simple_3D(
         num_angles=num_angles,
         num_dihedrals=num_dihedrals,
         eig_centrality=eig_centrality_vec,
-        betweenness_centrality=betweenness_centrality_vec
+        betweenness_centrality=betweenness_centrality_vec,
     )
     return data, atom_count, "success"
 

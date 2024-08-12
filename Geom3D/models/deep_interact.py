@@ -1,6 +1,7 @@
 import ase
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch_geometric.nn import global_add_pool, global_mean_pool, radius_graph, GPSConv
 from .encoders import AtomEncoder
 from .molecule_gnn_model import (
@@ -12,7 +13,7 @@ from .molecule_gnn_model import (
 )
 from .schnet import InteractionBlock, GaussianSmearing, ShiftedSoftplus
 from runners.util import apply_init, activation_dict
-from .interactors import InteractionMLP, InteractionMHA
+from .interactors import InteractionMLP, InteractionMHA, InteractionOuterProd
 from .transformer import TransformerLayer
 
 
@@ -132,6 +133,22 @@ class Interactor(nn.Module):
                     for _ in range(num_interaction_blocks)
                 ]
             )
+        elif self.interactor_type == "outer":
+            self.interactors = nn.ModuleList(
+                [
+                    InteractionOuterProd(
+                        emb_dim,
+                        # downsampled_dim=emb_dim // 20,
+                        downsampled_dim=200,
+                        dropout=dropout,
+                        num_layers=1,
+                        normalizer=nn.LayerNorm,
+                        initializer=args.initialization,
+                        activation=args.interactor_activation,
+                    ).to(device)
+                    for _ in range(num_interaction_blocks)
+                ]
+            )
 
         self.reset_parameters()
 
@@ -140,15 +157,17 @@ class Interactor(nn.Module):
             block.reset_parameters()
         for block in self.blocks_2d:
             block.reset_parameters()
-        if self.diff_interactor_per_block:
-            for interactor in self.interactors:
-                interactor.reset_parameters()
-        else:
-            self.interactor.reset_parameters()
-        for layer in self.mlp_3d:
-            if isinstance(layer, nn.Linear):
-                apply_init(self.args.initialization)(layer.weight)
-                nn.init.zeros_(layer.bias)
+
+        if self.interactor_type != "mean":
+            if self.diff_interactor_per_block:
+                for interactor in self.interactors:
+                    interactor.reset_parameters()
+            else:
+                self.interactor.reset_parameters()
+            for layer in self.mlp_3d:
+                if isinstance(layer, nn.Linear):
+                    apply_init(self.args.initialization)(layer.weight)
+                    nn.init.zeros_(layer.bias)
 
     def forward_3d(
         self,
@@ -209,21 +228,38 @@ class Interactor(nn.Module):
         if self.args.transfer:
             with torch.no_grad():
                 x_3d = self.atom_encoder_3d(orig_x[:, 0])
+                initial_3d = x_3d
+
+        initial_2d = x
 
         h_list_2d = [x]
         prev = x
+        x = x + x_3d
         for i in range(self.num_interaction_blocks):
             x = self.blocks_2d[i](x, edge_index, edge_attr)
             x = self.dropouts[i](x)
-            # x = self.norm_2d[i](x)
+            x = self.norm_2d[i](x)
             # x = F.relu(x)
+
+            # pos = torch.zeros((x_3d.size(0), 3), device=x_3d.device)
+            # x_3d = self.blocks_3d[i](x_3d, pos, batch)
 
             if self.residual:
                 x = x + prev
 
-            if self.args.transfer:
-                combined_x = self.interactors[i](x, x_3d)
-                x, x_3d = combined_x.split(self.emb_dim, dim=-1)
+            # if self.args.transfer:
+            #     if self.interactor_type == "mlp":
+            #         combined_x = self.interactors[i](x, x_3d)
+            #         x, x_3d = combined_x.split(self.emb_dim, dim=-1)
+            #     elif self.interactor_type == "mha":
+            #         x, x_3d = self.interactors[i](x, x_3d, batch)
+            #     elif self.interactor_type == "outer":
+            #         x, x_3d = self.interactors[i](x, x_3d, batch)
+
+            # if i == len(self.blocks_2d) - 1:
+            #     x = x * initial_2d
+            #     if self.args.transfer:
+            #         x_3d = x_3d * initial_3d
 
             h_list_2d.append(x)
             prev = x
@@ -272,12 +308,15 @@ class Interactor(nn.Module):
 
             x_3d = self.atom_encoder_3d(x_3d)
 
+        # x_3d = self.atom_encoder_2d(x)
+        initial_3d = x_3d
         prev_3d = x_3d
 
         interactor_residual_3d, interactor_residual_2d = None, None
 
         # if self.model_2d == "Transformer":
         x_2d = self.atom_encoder_2d(x)
+        initial_2d = x_2d
 
         edge_attr = batch.edge_attr
         edge_index = batch.edge_index
@@ -325,8 +364,19 @@ class Interactor(nn.Module):
                 x_2d, x_3d = self.interactors[i](
                     x_2d_int, x_3d_int, batch.batch.bincount()
                 )
+            elif self.interactor_type == "outer":
+                x_2d, x_3d = self.interactors[i](
+                    x_2d_int, x_3d_int, batch.batch.bincount()
+                )
+            elif self.interactor_type == "mean":
+                x = (x_2d + x_3d) / 2
+                x_2d, x_3d = x, x
             # else:
             #     interaction = self.interactor(x_2d_int, x_3d_int)
+
+            # if i == len(self.blocks_2d) - 1:
+            #     x_2d = x_2d * initial_2d
+            #     x_3d = x_3d * initial_3d
 
             if self.interactor_residual:
                 interactor_residual_2d = x_2d
@@ -356,6 +406,8 @@ class Interactor(nn.Module):
             x = (rep_2d + rep_3d) / 2
         elif self.final_pool == "sum":
             x = rep_2d + rep_3d
+        elif self.final_pool == "mul":
+            x = rep_2d * rep_3d
         else:
             raise ValueError("Invalid final pooling method")
 
@@ -453,6 +505,8 @@ class SchNetBlock(nn.Module):
         self.interaction = InteractionBlock(
             hidden_channels, num_gaussians, num_filters, cutoff
         )
+        self.batch_norm = nn.BatchNorm1d(hidden_channels)
+        self.linear = nn.Linear(hidden_channels, hidden_channels)
 
     def reset_parameters(self):
         self.interaction.reset_parameters()
@@ -464,5 +518,8 @@ class SchNetBlock(nn.Module):
         edge_attr = self.distance_expansion(edge_weight)
 
         h = self.interaction(h, edge_index, edge_weight, edge_attr)
+        # h = self.linear(h)
+        # h = self.batch_norm(h)
+        # h = F.silu(h)
 
         return h

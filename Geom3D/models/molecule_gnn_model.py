@@ -340,13 +340,14 @@ class TransformerConv(MessagePassing):
 
 
 class GINBlock(MessagePassing):
-    def __init__(self, emb_dim, initializer="glorot"):
+    def __init__(self, emb_dim, initializer="glorot", normalizer=nn.Identity()):
         super(GINBlock, self).__init__(aggr="add")
 
         self.mlp = torch.nn.Sequential(
             torch.nn.Linear(emb_dim, emb_dim),
-            torch.nn.ReLU(),
-            torch.nn.Linear(emb_dim, emb_dim),
+            # normalizer,
+            torch.nn.SiLU(),
+            # torch.nn.Linear(emb_dim, emb_dim),
         )
         self.eps = torch.nn.Parameter(torch.Tensor([0]))
 

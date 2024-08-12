@@ -171,7 +171,10 @@ def spd_loss(batch, embs_3d, pred_head, sample_edges, embs_2d=None):
         pair_embs_3d = embs_3d[sample_edges[0]] + embs_3d[sample_edges[1]]
         pair_embs = pair_embs_2d + pair_embs_3d
     else:
-        pair_embs = embs_3d[sample_edges[0]] + embs_3d[sample_edges[1]]
+        # pair_embs = embs_3d[sample_edges[0]] + embs_3d[sample_edges[1]]
+        pair_embs = torch.cat(
+            [embs_3d[sample_edges[0]], embs_3d[sample_edges[1]]], dim=-1
+        )
 
     pred_spds = pred_head(pair_embs).squeeze()
 
@@ -229,7 +232,9 @@ def anchor_tup_pred_loss(embs, pred_head, indices):
     return loss
 
 
-def interatomic_distance_loss(batch, embs_2d, pred_head, sample_edges, embs_3d=None):
+def interatomic_distance_loss(
+    batch, embs_2d, pred_head, sample_edges, embs_3d=None, visualize=False
+):
     """
     Given a batch of embeddings, predict the interatomic distances
     with the given head and return the mean squared error loss.
@@ -248,17 +253,22 @@ def interatomic_distance_loss(batch, embs_2d, pred_head, sample_edges, embs_3d=N
         pair_embs_3d = embs_3d[sample_edges[0]] + embs_3d[sample_edges[1]]
         pair_embs = pair_embs_2d + pair_embs_3d
     else:
-        pair_embs = embs_2d[sample_edges[0]] + embs_2d[sample_edges[1]]
+        pair_embs = torch.cat(
+            [embs_2d[sample_edges[0]], embs_2d[sample_edges[1]]], dim=1
+        )
 
     pred_distances = pred_head(pair_embs).squeeze()
     true_distances = interatomic_distances[sample_edges[0], sample_edges[1]]
 
     loss = mse_loss(pred_distances, true_distances)
 
-    # draw a histogram of the predicted versus true distances
-    plt.hist(pred_distances.detach().cpu().numpy(), bins=50, color="red", alpha=0.5)
-    plt.hist(true_distances.detach().cpu().numpy(), bins=50, color="blue", alpha=0.5)
-    plt.savefig("distances.png")
+    if visualize:
+        plt.hist(pred_distances.detach().cpu().numpy(), bins=50, color="red", alpha=0.5)
+        plt.hist(
+            true_distances.detach().cpu().numpy(), bins=50, color="blue", alpha=0.5
+        )
+        plt.savefig("distances.png")
+        plt.close()
 
     return loss
 
@@ -309,9 +319,9 @@ def bond_angle_loss(batch, embs_2d, pred_head, indices, embs_3d=None, rep_type="
     pred_angles = pred_head(angle_emb).squeeze()
     loss = mse_loss(pred_angles, true_angles)
 
-    plt.hist(pred_angles.detach().cpu().numpy(), bins=50, color="red", alpha=0.5)
-    plt.hist(true_angles.detach().cpu().numpy(), bins=50, color="blue", alpha=0.5)
-    plt.savefig("angles.png")
+    # plt.hist(pred_angles.detach().cpu().numpy(), bins=50, color="red", alpha=0.5)
+    # plt.hist(true_angles.detach().cpu().numpy(), bins=50, color="blue", alpha=0.5)
+    # plt.savefig("angles.png")
 
     return loss
 

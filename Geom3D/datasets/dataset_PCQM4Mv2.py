@@ -90,7 +90,7 @@ class PCQM4Mv2(InMemoryDataset):
                     print("Skipping single-atom molecule")
                     continue
 
-                data, _ = mol_to_graph_data_obj_simple_3D(
+                data, _, _ = mol_to_graph_data_obj_simple_3D(
                     mol, pretraining=self.pretraining
                 )
 
@@ -150,7 +150,7 @@ class PCQM4Mv2(InMemoryDataset):
         if hasattr(self.data, "__num_nodes__"):
             data.num_nodes = self.data.__num_nodes__[idx]
 
-        for key in self.data.keys:
+        for key in self.data.keys():
             item, slices = self.data[key], self.slices[key]
             if torch.is_tensor(item):
                 s = list(repeat(slice(None), item.dim()))

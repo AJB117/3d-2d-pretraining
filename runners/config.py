@@ -56,7 +56,7 @@ parser.add_argument("--batch_size", type=int, default=128)
 parser.add_argument("--epochs", type=int, default=100)
 parser.add_argument("--lr", type=float, default=5e-5)
 parser.add_argument("--lr_scale", type=float, default=1)
-parser.add_argument("--decay", type=float, default=0)
+parser.add_argument("--decay", type=float, default=1e-5)
 parser.add_argument("--print_every_epoch", type=int, default=1)
 parser.add_argument("--loss", type=str, default="mae", choices=["mse", "mae"])
 parser.add_argument("--lr_scheduler", type=str, default="CosineAnnealingLR")
@@ -223,7 +223,7 @@ parser.add_argument(
 )
 parser.add_argument(
     "--final_pool",
-    choices=["cat", "mean", "attention"],
+    choices=["cat", "mean", "attention", "mul"],
     default="cat",
     help="how to pool the final embeddings + interaction emeddings",
 )
@@ -395,44 +395,44 @@ parser.add_argument(
 
 args = parser.parse_args()
 
-if args.config_dir and args.config_name:
-    with open(os.path.join(args.config_dir, args.config_name), "r") as f:
-        argdict = yaml.load(f, yaml.FullLoader)
-        for key in argdict:
-            setattr(args, key, argdict[key])
+# if args.config_dir and args.config_name:
+#     with open(os.path.join(args.config_dir, args.config_name), "r") as f:
+#         argdict = yaml.load(f, yaml.FullLoader)
+#         for key in argdict:
+#             setattr(args, key, argdict[key])
 
-elif args.save_config:
-    if not os.path.exists(args.config_dir):
-        os.makedirs(args.config_dir)
+# elif args.save_config:
+#     if not os.path.exists(args.config_dir):
+#         os.makedirs(args.config_dir)
 
-    args.config_name = args.output_model_name
+#     args.config_name = args.output_model_name
 
-    if not args.config_name.endswith(".yml"):
-        args.config_name = args.config_name + ".yml"
+#     if not args.config_name.endswith(".yml"):
+#         args.config_name = args.config_name + ".yml"
 
-        flags = ""
-        for k, v in vars(args).items():
-            if k in ["config_dir", "config_name", "save_config"]:
-                continue
-            if isinstance(v, bool):
-                if not v:
-                    continue
-                flags += f"--{k} "
+#         flags = ""
+#         for k, v in vars(args).items():
+#             if k in ["config_dir", "config_name", "save_config"]:
+#                 continue
+#             if isinstance(v, bool):
+#                 if not v:
+#                     continue
+#                 flags += f"--{k} "
 
-            elif isinstance(v, list):
-                flags += f"--{k} {' '.join(map(str, v))} "
-            else:
-                flags += f"--{k} {v} "
+#             elif isinstance(v, list):
+#                 flags += f"--{k} {' '.join(map(str, v))} "
+#             else:
+#                 flags += f"--{k} {v} "
 
-        args.flags = flags
+#         args.flags = flags
 
-    config_path = os.path.join(args.config_dir, args.dataset + "_" + args.config_name)
+#     config_path = os.path.join(args.config_dir, args.dataset + "_" + args.config_name)
 
-    with open(config_path, "w") as f:
-        args_dict = vars(args)
-        yaml.dump(args_dict, f)
+#     with open(config_path, "w") as f:
+#         args_dict = vars(args)
+#         yaml.dump(args_dict, f)
 
-    print(config_path)
+#     print(config_path)
 
-if not args.save_config:
-    print("arguments\t", args)
+# if not args.save_config:
+#     print("arguments\t", args)

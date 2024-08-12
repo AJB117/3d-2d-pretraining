@@ -418,7 +418,13 @@ class VirtualNodeMol(BaseTransform):
         return data
 
 
-activation_dict = {"ReLU": nn.ReLU, "GELU": nn.GELU, "SiLU": nn.SiLU, "Swish": nn.SiLU}
+activation_dict = {
+    "ReLU": nn.ReLU,
+    "GELU": nn.GELU,
+    "SiLU": nn.SiLU,
+    "Swish": nn.SiLU,
+    "LeakyReLU": nn.LeakyReLU,
+}
 
 """
 TorchDrug functions for variadic inputs, credit to https://torchdrug.ai/

@@ -142,7 +142,7 @@ class MoleculeDatasetQM9(InMemoryDataset):
 
     def get(self, idx):
         data = Data()
-        for key in self.data.keys:
+        for key in self.data.keys():
             item, slices = self.data[key], self.slices[key]
             s = list(repeat(slice(None), item.dim()))
             s[data.__cat_dim__(key, item)] = slice(slices[idx], slices[idx + 1])
@@ -247,7 +247,7 @@ class MoleculeDatasetQM9(InMemoryDataset):
                 invalid_count += 1
                 continue
 
-            data, atom_count = mol_to_graph_data_obj_simple_3D(
+            data, atom_count, _ = mol_to_graph_data_obj_simple_3D(
                 mol,
                 pure_atomic_num=self.use_pure_atomic_num,
             )

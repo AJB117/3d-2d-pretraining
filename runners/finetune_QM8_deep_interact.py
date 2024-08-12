@@ -1,4 +1,3 @@
-import portalocker
 import wandb
 import warnings
 import csv
@@ -202,13 +201,7 @@ def train(epoch, device, loader, optimizer):
                     batch.x, batch.edge_index, batch.edge_attr, batch.batch
                 )
             else:
-                mol_rep = model(
-                    batch.x,
-                    batch.edge_index,
-                    batch.edge_attr,
-                    batch.positions,
-                    batch.batch,
-                )
+                mol_rep = model(batch)
 
             pred = graph_pred_mlp(mol_rep).squeeze()
 
@@ -271,13 +264,7 @@ def eval(device, loader):
                     batch.x, batch.edge_index, batch.edge_attr, batch.batch
                 )
             else:
-                mol_rep = model(
-                    batch.x,
-                    batch.edge_index,
-                    batch.edge_attr,
-                    batch.positions,
-                    batch.batch,
-                )
+                mol_rep = model(batch)
 
             pred = graph_pred_mlp(mol_rep).squeeze()
 

@@ -54,7 +54,7 @@ def split_pretraining(dataset, dataset_name):
         )
         torch.save(pretrain_idx, f"{dataset_name}_pretraining_idx.pt")
 
-    train_dataset = dataset[pretrain_idx]
+    train_dataset = dataset[pretrain_idx[: len(dataset)]]
 
     print("train set for pretraining: ", len(train_dataset))
     return train_dataset
@@ -150,7 +150,7 @@ def get_pred_head(
     out_dim,
     is_shallow=False,
     normalizer=nn.Identity,
-    activation=nn.ReLU,
+    activation=nn.SiLU,
     act_at_end=False,
 ):
     if is_shallow:
@@ -180,7 +180,7 @@ def create_pretrain_heads(task, intermediate_dim, device):
 
     if task == "interatomic_dist":
         pred_head = get_pred_head(
-            intermediate_dim,
+            intermediate_dim * 2,
             1,
             is_shallow=use_shallow_predictors,
             normalizer=normalizer,
@@ -232,7 +232,7 @@ def create_pretrain_heads(task, intermediate_dim, device):
         )
     elif task == "spd":
         pred_head = get_pred_head(
-            intermediate_dim,
+            intermediate_dim * 2,
             64,
             is_shallow=use_shallow_predictors,
             normalizer=normalizer,
@@ -300,6 +300,27 @@ def pretrain(
     num_iters = len(loader)
 
     for step, batch in enumerate(l):
+        # if step % 20 == 0:
+        #     # print the norms of every interactor layer
+        #     all_norms = []
+        #     for i, layer in enumerate(model.interactors):
+        #         norms = sum(
+        #             [
+        #                 torch.norm(param).item()
+        #                 for param in layer.parameters()
+        #                 if param.requires_grad
+        #             ]
+        #         )
+        #         all_norms.append(norms)
+
+        #     string = " ".join(
+        #         [
+        #             f"Layer {i} norm: {all_norms[i]}"
+        #             for i, layer in enumerate(model.interactors)
+        #         ]
+        #     )
+        #     print(string)
+
         batch = batch.to(device)
 
         # final_embs, midstream_2d_outs, midstream_3d_outs = model(
@@ -342,9 +363,10 @@ def pretrain(
             )
 
             if args.all_losses_at_end:
-                final_midstream_2d = midstream_2d_outs[-1]
-                final_midstream_3d = midstream_3d_outs[-1]
-                acc = 0
+                final_midstream_2d = torch.mean(torch.stack(outs_2d), dim=0)
+                final_midstream_3d = torch.mean(torch.stack(outs_3d), dim=0)
+
+                acc_2d, acc_3d = None, None
 
                 for i, (task_2d, task_3d) in enumerate(zip(tasks_2d, tasks_3d)):
                     midstream_3d = (
@@ -360,7 +382,8 @@ def pretrain(
                             final_midstream_2d,
                             pretrain_heads_2d[i],
                             sample_edges,
-                            embs_3d=midstream_3d,
+                            # embs_3d=midstream_3d,
+                            visualize=step % 10 == 0,
                         )
                     elif task_2d == "bond_angle":
                         loss_2d = bond_angle_loss(
@@ -371,7 +394,7 @@ def pretrain(
                             embs_3d=midstream_3d,
                         )
                     elif task_2d == "dihedral_angle":
-                        loss_2d, _ = dihedral_angle_loss(
+                        loss_2d, acc_2d = dihedral_angle_loss(
                             batch,
                             final_midstream_2d,
                             pretrain_heads_2d[i],
@@ -390,19 +413,19 @@ def pretrain(
                             neg_samples=args.pretrain_neg_link_samples,
                         )
                     elif task_3d == "edge_classification":
-                        loss_3d, acc = edge_classification_loss(
+                        loss_3d, acc_3d = edge_classification_loss(
                             batch,
                             final_midstream_3d,
                             pretrain_heads_3d[i],
                             embs_2d=midstream_2d,
                         )
                     elif task_3d == "spd":
-                        loss_3d, acc = spd_loss(
+                        loss_3d, acc_3d = spd_loss(
                             batch,
                             final_midstream_3d,
                             pretrain_heads_3d[i],
                             sample_edges,
-                            embs_2d=midstream_2d,
+                            # embs_2d=midstream_2d,
                         )
                     elif task_3d == "bond_anchor_pred":
                         loss_3d = anchor_pred_loss(
@@ -417,7 +440,7 @@ def pretrain(
                             dihedral_angle_indices,
                         )
                     elif task_3d == "centrality_ranking":
-                        loss_3d, acc = centrality_ranking_loss(
+                        loss_3d, acc_3d = centrality_ranking_loss(
                             batch,
                             final_midstream_3d,
                             pretrain_heads_3d[i],
@@ -425,7 +448,7 @@ def pretrain(
                             embs_2d=midstream_2d,
                         )
                     elif task_3d == "betweenness_ranking":
-                        loss_3d, acc = betweenness_ranking_loss(
+                        loss_3d, acc_3d = betweenness_ranking_loss(
                             batch,
                             final_midstream_3d,
                             pretrain_heads_3d[i],
@@ -437,6 +460,12 @@ def pretrain(
                     loss_terms.append(loss)
                     loss_dict[task_2d] += loss_2d.item()
                     loss_dict[task_3d] += loss_3d.item()
+
+                    if acc_2d is not None:
+                        loss_dict[task_2d + "_acc"] += acc_2d
+                    if acc_3d is not None:
+                        loss_dict[task_3d + "_acc"] += acc_3d
+
             else:
                 for i, (task_2d, pred_head, midstream, balance_2d) in enumerate(
                     zip(tasks_2d, pretrain_heads_2d, outs_2d, balances_2d)
@@ -537,6 +566,14 @@ def pretrain(
 
         optimizer.zero_grad()
         loss.backward()
+        # norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        # if step % 20 == 0:
+        #     # print(f"Gradient norm: {norm}\r")
+        #     weights_0, weights_7 = (
+        #         model.interactors[0].processing_layers[1].weight,
+        #         model.interactors[5].processing_layers[1].weight,
+        #     )
+        #     print(f"Layer 0 weights: {weights_0}\nLayer 7 weights: {weights_7}")
         optimizer.step()
 
         if args.lr_scheduler in ["CosineAnnealingWarmRestarts"]:
@@ -626,7 +663,7 @@ def main():
         # )
     elif args.dataset == "PCQM4Mv2":
         base_dataset = PCQM4Mv2(data_root, transform=None)
-        dataset, _, _ = split(base_dataset)
+        dataset = split_pretraining(base_dataset, args.dataset)
     elif args.dataset == "PCQM4Mv2-pretraining":
         dataset = PCQM4Mv2(data_root, transform=None)
         # dataset = split_pretraining(base_dataset)
@@ -653,6 +690,7 @@ def main():
         emb_dim=args.emb_dim,
         device=device,
         num_node_class=119 + 1,  # + 1 for virtual node
+        interactor_type=args.interactor_type,
         interaction_rep_2d=args.interaction_rep_2d,
         interaction_rep_3d=args.interaction_rep_3d,
         residual=args.residual,
@@ -715,7 +753,7 @@ def main():
     epoch_start = 1
 
     if os.path.exists(args.input_model_file):
-        saver_dict = torch.load(args.input_model_file)
+        saver_dict = torch.load(args.input_model_file, map_location=device)
         model.load_state_dict(saver_dict["model"])
         graph_pred_mlp.load_state_dict(saver_dict["graph_pred_mlp"])
         for head, pretrained_head in zip(

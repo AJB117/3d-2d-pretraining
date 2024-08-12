@@ -11,7 +11,7 @@ import torch.optim as optim
 import warnings
 
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import global_mean_pool
+from torch_geometric.nn import global_mean_pool, global_max_pool
 from tqdm import tqdm
 from sklearn.metrics import roc_auc_score
 
@@ -109,6 +109,7 @@ def model_setup():
         emb_dim=args.emb_dim,
         device=device,
         num_node_class=119 + 1,  # + 1 for virtual node
+        interactor_type=args.interactor_type,
         interaction_rep_2d=args.interaction_rep_2d,
         interaction_rep_3d=args.interaction_rep_3d,
         residual=args.residual,
@@ -129,9 +130,13 @@ def model_setup():
 
 def load_model(model, model_weight_file):
     print("Loading from {}".format(model_weight_file))
-    model_weights = torch.load(model_weight_file)
-    if args.mode == "method":  # as opposed to baseline
-        model.load_state_dict(model_weights["model"])
+    try:
+        model_weights = torch.load(model_weight_file)
+        if args.mode == "method":  # as opposed to baseline
+            model.load_state_dict(model_weights["model"])
+    except Exception as e:
+        print("Failed to load model weights")
+        print(e)
     return
 
 
@@ -183,7 +188,13 @@ def train(epoch, device, loader, optimizer):
                 batch.x, batch.edge_index, batch.edge_attr, batch.batch
             )
 
+        # with torch.no_grad():
+        #     mol_rep_3d = global_mean_pool(
+        #         model.atom_encoder_3d(batch.x[:, 0]), batch.batch
+        #     )
+
         if graph_pred_mlp is not None:
+            # pred = graph_pred_mlp(torch.cat((mol_rep, mol_rep_3d), dim=-1))
             pred = graph_pred_mlp(mol_rep)
         else:
             pred = mol_rep
@@ -199,12 +210,15 @@ def train(epoch, device, loader, optimizer):
         loss_mat = criterion(pred.double(), (y + 1) / 2)
 
         loss_mat = torch.where(
-            is_valid, loss_mat, torch.zeros(loss_mat.shape).to(device).to(torch.float64)
+            is_valid,
+            loss_mat,
+            torch.zeros(loss_mat.shape, device=device).to(torch.float64),
         )
 
         optimizer.zero_grad()
         loss = torch.sum(loss_mat) / torch.sum(is_valid)
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
         loss_acc += loss.cpu().detach().item()
 
@@ -234,6 +248,11 @@ def eval(device, loader):
     for batch in L:
         batch = batch.to(device)
 
+        # with torch.no_grad():
+        #     mol_rep_3d = global_mean_pool(
+        #         model.atom_encoder_3d(batch.x[:, 0]), batch.batch
+        #     )
+
         if args.mode != "method":  # assumes 2d
             node_repr = model(batch.x, batch.edge_index, batch.edge_attr)
             mol_rep = global_mean_pool(node_repr, batch.batch)
@@ -243,6 +262,7 @@ def eval(device, loader):
             )
 
         if graph_pred_mlp is not None:
+            # pred = graph_pred_mlp(torch.cat((mol_rep, mol_rep_3d), dim=-1))
             pred = graph_pred_mlp(mol_rep)
         else:
             pred = mol_rep
